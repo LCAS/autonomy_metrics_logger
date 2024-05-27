@@ -51,5 +51,5 @@ qtcreator-*
 # Catkin custom files
 CATKIN_IGNORE
 
-# mongo db
-/workspaces/mdbi_logger/src/mdbi_logger/data/db/*
+# mongodb
+src/mdbi_logger/data/db/*
