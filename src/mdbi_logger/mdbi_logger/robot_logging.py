@@ -61,7 +61,7 @@ class MDBILogger(Node):
         self.first_gps_fix = True
 
         # Get robot name and other environmental variables (Group them into a dictionary)
-        self.env_variables = {
+        env_variables = {
             'robot_name': os.getenv('ROBOT_NAME', 'UNDEFINED'),
             'farm_name': os.getenv('FARM_NAME', 'UNDEFINED'),
             'field_name': os.getenv('FIELD_NAME', 'UNDEFINED'),
@@ -75,8 +75,10 @@ class MDBILogger(Node):
         # Subscribe to the topics
         self.create_subscriptions()
 
-        while rclpy.ok():
-            pass
+        self.db_mgr.init_session(env_variables)
+
+        # while rclpy.ok():
+        #     pass
 
         
     def log_event(self, msg = ''):
