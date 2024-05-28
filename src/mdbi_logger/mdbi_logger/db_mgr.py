@@ -43,7 +43,7 @@ class DatabaseMgr:
         self.sessions_collection = self.db['sessions']
         self.session_id = None
 
-    def init_session(self, **env_variables):
+    def init_session(self, env_variables):
         """
         Initializes a new session with the given environmental variables.
 
@@ -55,11 +55,11 @@ class DatabaseMgr:
         session_start = datetime.now(tz=timezone.utc)
         session_document = {
             "session_start_time": session_start,
-            "robot_name": env_variables.get('robot_name'),
-            "farm_name": env_variables.get('farm_name'),
-            "field_name": env_variables.get('field_name'),
-            "application": env_variables.get('application'),
-            "scenario_name": env_variables.get('scenario_name'),
+            "robot_name": env_variables['robot_name'],
+            "farm_name": env_variables['farm_name'],
+            "field_name": env_variables['field_name'],
+            "application": env_variables['application'],
+            "scenario_name": env_variables['scenario_name'],
             "incidents": 0,
             "distance": 0,
             "events": []
