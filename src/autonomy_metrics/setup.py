@@ -1,10 +1,10 @@
 from setuptools import find_packages, setup
 
-package_name = 'mdbi_logger'
+package_name = 'autonomy_metrics'
 
 setup(
     name=package_name,
-    version='0.0.1',
+    version='0.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -13,14 +13,13 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Ibrahim Hroob',
+    maintainer='ros',
     maintainer_email='ibrahim.hroub7@gmail.com',
-    description='A centralized package provides a logging node designed to track and record all operational events of robots',
-    license='Apache',
+    description='TODO: Package description',
+    license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
         ],
     },
 )
-

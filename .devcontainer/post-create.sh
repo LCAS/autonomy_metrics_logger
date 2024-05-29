@@ -22,7 +22,7 @@ colcon build --symlink-install --continue-on-error
 
 echo "Starting mongodb manually.."
 
-db_dir=/workspaces/mdbi_logger/src/mdbi_logger/data/db
+db_dir=/workspaces/mdbi_logger/src/autonomy_metrics/data/db
 
 # Run MongoDB in the Background
 nohup mongod --dbpath $db_dir > /dev/null 2>&1 &
