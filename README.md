@@ -26,7 +26,7 @@ MDBI Logger is a ROS2 node designed to log robot events and calculate the Mean D
 2. **Run the Node:**
 
     ```sh
-    TODO
+    ros2 launch autonomy_metrics autonomy_metrics.launch.py
     ```
 
 ## Parameters
