@@ -24,8 +24,6 @@ echo "Starting mongodb manually.."
 
 db_dir=/workspaces/mdbi_logger/src/mdbi_logger/data/db
 
-sudo chown $USER -R $db_dir
-
 # Run MongoDB in the Background
 nohup mongod --dbpath $db_dir > /dev/null 2>&1 &
 

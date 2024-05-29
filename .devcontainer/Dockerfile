@@ -53,6 +53,8 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN python3 -m pip install pymongo
 
 ##================== 
+# https://stackoverflow.com/questions/73257839/setup-py-install-is-deprecated-warning-shows-up-every-time-i-open-a-terminal-i
+RUN pip install setuptools==58.2.0
 
 # get the source tree and analyse it for its package.xml only
 FROM base as sourcefilter
