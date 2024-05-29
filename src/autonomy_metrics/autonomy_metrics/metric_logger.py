@@ -23,7 +23,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Bool
 from nav_msgs.msg import Odometry
-from db_mgr import DatabaseMgr as DBMgr
+from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
 from datetime import datetime, timezone
 
 class AutonomyMetricsLogger(Node):
