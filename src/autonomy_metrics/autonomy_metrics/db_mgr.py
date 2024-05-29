@@ -38,7 +38,7 @@ class DatabaseMgr:
         Args:
             database_name (str): The name of the database to connect to.
         """
-        self.client = MongoClient('mongodb://localhost:27017/')
+        self.client = MongoClient('mongodb://localhost:27018/')
         self.db = self.client[database_name]
         self.sessions_collection = self.db['sessions']
         self.session_id = None

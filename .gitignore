@@ -52,4 +52,4 @@ qtcreator-*
 CATKIN_IGNORE
 
 # mongodb
-src/mdbi_logger/data/db/*
+src/autonomy_metrics/data/db/*

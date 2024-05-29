@@ -26,7 +26,7 @@ from nav_msgs.msg import Odometry
 from db_mgr import DatabaseMgr as DBMgr
 from datetime import datetime, timezone
 
-class MDBILogger(Node):
+class AutonomyMetricsLogger(Node):
     """
     A class for logging robot events to calculate MDBI (Mean Distance Between Incidents).
 
@@ -167,11 +167,12 @@ class MDBILogger(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    md = MDBILogger()
-    rclpy.spin(md)
-    md.destroy_node()
+    autonomy_metric_logger = AutonomyMetricsLogger()
+    rclpy.spin(autonomy_metric_logger)
+    autonomy_metric_logger.destroy_node()
     rclpy.shutdown()
 
 
 if __name__ == '__main__':
     main()
+
