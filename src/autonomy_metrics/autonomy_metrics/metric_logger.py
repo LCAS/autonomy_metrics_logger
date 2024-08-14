@@ -25,6 +25,7 @@ from std_msgs.msg import Float32, Bool
 from nav_msgs.msg import Odometry
 from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
 from datetime import datetime, timezone
+from rclpy.qos import qos_profile_sensor_data
 
 class AutonomyMetricsLogger(Node):
     """
@@ -115,10 +116,10 @@ class AutonomyMetricsLogger(Node):
 
 
     def create_subscriptions(self):
-        self.create_subscription(Float32, self.params['battery_status'], self.battery_level_callback, 10)
-        self.create_subscription(Bool, self.params['estop_status'], self.estop_sub_callback, 10)
-        self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, 10)
-        self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, 10)
+        self.create_subscription(Float32, self.params['battery_status'], self.battery_level_callback, qos_profile=qos_profile_sensor_data)
+        self.create_subscription(Bool, self.params['estop_status'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
+        self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
+        self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
 
 
     def battery_level_callback(self, msg):
