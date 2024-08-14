@@ -13,32 +13,39 @@ def generate_launch_description():
     battery_status = LaunchConfiguration('battery_status', default='/battery_status')
     estop_status = LaunchConfiguration('estop_status', default='/estop_status')
 
+    # New parameters for MongoDB host and port
+    mongodb_host = LaunchConfiguration('mongodb_host', default='localhost')
+    mongodb_port = LaunchConfiguration('mongodb_port', default='27017')
 
     return LaunchDescription([
+        # Declare Launch Arguments for the existing parameters
         DeclareLaunchArgument(
-            'gps_topic', default_value=gps_topic, description=''),
+            'gps_topic', default_value=gps_topic, description='GPS topic for base fix'),
         DeclareLaunchArgument(
-            'gps_odom_topic', default_value=gps_odom_topic, description=''),
+            'gps_odom_topic', default_value=gps_odom_topic, description='GPS topic for odometry'),
         DeclareLaunchArgument(
-            'battery_status', default_value=battery_status, description=''),
+            'battery_status', default_value=battery_status, description='Battery status topic'),
         DeclareLaunchArgument(
-            'estop_status', default_value=estop_status, description=''),
+            'estop_status', default_value=estop_status, description='E-stop status topic'),
+
+        # Declare Launch Arguments for the new MongoDB parameters
+        DeclareLaunchArgument(
+            'mongodb_host', default_value=mongodb_host, description='MongoDB host address'),
+        DeclareLaunchArgument(
+            'mongodb_port', default_value=mongodb_port, description='MongoDB port'),
+
+        # Node Configuration
         Node(
             package='autonomy_metrics',
             executable='metric_logger',
             output='screen',
             parameters=[{
-                'gps_topic': '/gps_base/fix',
-                'gps_odom_topic': '/gps_base/odometry',
-                'battery_status': '/battery_status',
-                'estop_status': '/estop_status'
+                'gps_topic': gps_topic,
+                'gps_odom_topic': gps_odom_topic,
+                'battery_status': battery_status,
+                'estop_status': estop_status,
+                'mongodb_host': mongodb_host,
+                'mongodb_port': mongodb_port,
             }],
-            # env={
-            #     'ROBOT_NAME': 'your_robot_name',
-            #     'FARM_NAME': 'your_farm_name',
-            #     'FIELD_NAME': 'your_field_name',
-            #     'APPLICATION': 'your_application',
-            #     'SCENARIO_NAME': 'your_scenario_name'
-            # }
         )
     ])
