@@ -31,14 +31,16 @@ class DatabaseMgr:
         session_id (ObjectId): The ID of the current session.
     """
 
-    def __init__(self, database_name='robot_incidents'):
+    def __init__(self, database_name='robot_incidents', host='localhost', port=27017):
         """
-        Initializes the DatabaseMgr with a given database name.
+        Initializes the DatabaseMgr with a given database name, host, and port.
 
         Args:
             database_name (str): The name of the database to connect to.
+            host (str): The hostname or IP address of the MongoDB server.
+            port (int): The port of the MongoDB server.
         """
-        self.client = MongoClient('mongodb://localhost:27018/')
+        self.client = MongoClient(f'mongodb://{host}:{port}/')
         self.db = self.client[database_name]
         self.sessions_collection = self.db['sessions']
         self.session_id = None

@@ -52,7 +52,13 @@ class AutonomyMetricsLogger(Node):
         self.mdbi = 0  # Mean Distance Between Incidents
         self.incidents = 0
         self.distance = 0  # Traveled distance in meters
-        self.db_mgr = DBMgr()
+
+        # Declare and get the ROS parameters, including MongoDB host and port
+        self.declare_and_get_parameters()
+
+        # Initialize DatabaseMgr with the retrieved port
+        self.db_mgr = DBMgr(host=self.mongo_host, port=self.mongo_port)
+
         self.gps_data = None
         self.estop = False
         self.battery_level = 0
@@ -70,19 +76,13 @@ class AutonomyMetricsLogger(Node):
             'scenario_name': os.getenv('SCENARIO_NAME', 'UNDEFINED'),
         }
 
-        # Declare and get the node parameters
-        self.declare_and_get_parameters()
-
         # Subscribe to the topics
         self.create_subscriptions()
 
+        # Initialize session in the database
         self.db_mgr.init_session(env_variables)
 
-        # while rclpy.ok():
-        #     pass
-
-        
-    def log_event(self, msg = ''):
+    def log_event(self, msg=''):
         event_time = datetime.now(tz=timezone.utc)
         event = {
             'time': event_time,
@@ -97,8 +97,15 @@ class AutonomyMetricsLogger(Node):
         self.db_mgr.update_distance(self.distance)
         self.db_mgr.update_incidents(self.incidents)
 
-
     def declare_and_get_parameters(self):
+        # Declare MongoDB host and port as ROS parameters
+        self.declare_parameter('mongodb_host', 'localhost')
+        self.declare_parameter('mongodb_port', 27017)
+
+        # Retrieve the parameters
+        self.mongo_host = self.get_parameter('mongodb_host').get_parameter_value().string_value
+        self.mongo_port = self.get_parameter('mongodb_port').get_parameter_value().integer_value
+
         param_defaults = {
             'gps_topic': '/gps_base/fix',
             'gps_odom_topic': '/gps_base/odometry',
@@ -114,17 +121,14 @@ class AutonomyMetricsLogger(Node):
         for key, value in self.params.items():
             self.get_logger().info(f"{key.replace('_', ' ').title()}: {value}")
 
-
     def create_subscriptions(self):
         self.create_subscription(Float32, self.params['battery_status'], self.battery_level_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(Bool, self.params['estop_status'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
 
-
     def battery_level_callback(self, msg):
         self.battery_status = msg.data
-
 
     def estop_sub_callback(self, msg):
         if msg.data != self.estop:
@@ -135,7 +139,6 @@ class AutonomyMetricsLogger(Node):
                 self.incidents += 1
                 self.get_logger().info(f"Incident count incremented to: {self.incidents}")
                 self.log_event('EMS')
-
 
     def gps_fix_callback(self, msg):
         self.gps_data = {
@@ -168,7 +171,9 @@ class AutonomyMetricsLogger(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    
     autonomy_metric_logger = AutonomyMetricsLogger()
+    
     rclpy.spin(autonomy_metric_logger)
     autonomy_metric_logger.destroy_node()
     rclpy.shutdown()
@@ -176,4 +181,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
