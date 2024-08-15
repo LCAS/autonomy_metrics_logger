@@ -105,7 +105,7 @@ class AutonomyMetricsLogger(Node):
             'gps_odom_topic': '/gps_base/odometry',
             'battery_status': '/battery_status',
             'estop_status': '/estop_status',
-            'actioned_by_coordinator_topic': '/topological_navigation/execute_policy_mode/goal'
+            'goal_actioned_by_coordinator': '/topological_navigation/execute_policy_mode/goal'
         }
 
         self.params = {}
