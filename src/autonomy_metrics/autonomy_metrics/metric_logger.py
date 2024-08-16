@@ -23,6 +23,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Bool
 from nav_msgs.msg import Odometry
+from topological_navigation_msgs.msg import ExecutePolicyModeGoal
 from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
 from datetime import datetime, timezone
 from rclpy.qos import qos_profile_sensor_data
@@ -51,6 +52,7 @@ class AutonomyMetricsLogger(Node):
         # Define useful global variables
         self.mdbi = 0  # Mean Distance Between Incidents
         self.incidents = 0
+        self.tasks_received_from_coordinator = 0
         self.distance = 0  # Traveled distance in meters
 
         # Declare and get the ROS parameters, including MongoDB host and port
@@ -110,7 +112,8 @@ class AutonomyMetricsLogger(Node):
             'gps_topic': '/gps_base/fix',
             'gps_odom_topic': '/gps_base/odometry',
             'battery_status': '/battery_status',
-            'estop_status': '/estop_status'
+            'estop_status': '/estop_status',
+            'goal_actioned_by_coordinator': '/topological_navigation/execute_policy_mode/goal'
         }
 
         self.params = {}
@@ -126,6 +129,7 @@ class AutonomyMetricsLogger(Node):
         self.create_subscription(Bool, self.params['estop_status'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
+        self.create_subscription(ExecutePolicyModeGoal, self.params['actioned_by_coordinator_topic'], self.coordinator_callback, qos_profile=qos_profile_sensor_data) 
 
     def battery_level_callback(self, msg):
         self.battery_status = msg.data
@@ -140,6 +144,13 @@ class AutonomyMetricsLogger(Node):
                 self.get_logger().info(f"Incident count incremented to: {self.incidents}")
                 self.log_event('EMS')
 
+    def coordinator_callback(self, msg):
+        edge_id = msg.route.edge_id
+        source = msg.route.source
+        self.tasks_received_from_coordinator += 1
+        self.get_logger().info(f"Task count incremented to: {self.tasks_received_from_coordinator}")
+        self.log_event('Coordinator_task')
+        
     def gps_fix_callback(self, msg):
         self.gps_data = {
             'latitude': msg.latitude,
