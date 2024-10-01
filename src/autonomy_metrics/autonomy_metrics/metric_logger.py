@@ -242,21 +242,12 @@ class AutonomyMetricsLogger(Node):
                 self.log_event('EMS', self.details)
 
     def control_mode_callback(self, msg):
-        if msg.data != self.details['operation_mode']:
-            self.details['operation_mode'] = msg.data
-
-            if self.details['operation_mode'] == self.MAN:
-                self.incidents += 1
-                self.log_event('Manual_override', self.details)
-            elif self.details['operation_mode'] == self.AUTO:
-                self.log_event('Autonomous', self.details)
-
-    def control_mode_callback(self, msg):
         current_time = datetime.now()
         
         if msg.data != self.details['operation_mode']:
             previous_mode = self.details['operation_mode']
             self.details['operation_mode'] = msg.data
+            self.get_logger().info(f"operation_mode : {msg.data}")
 
             # If switching from AUTO to MANUAL, calculate elapsed time in AUTO mode
             if previous_mode == self.AUTO and self.details['operation_mode'] == self.MAN:
@@ -289,10 +280,35 @@ class AutonomyMetricsLogger(Node):
         self.log_event('Coordinator_task', self.details)
         
     def hunter_status_callback(self, msg):
-        '''
-        For hunter msg, we are only interested in the control mode, if it has toggled between auto and manualy
-        '''
-        self.details['hunter_status'] = msg
+        # Serialize HunterStatus into a dictionary
+        serialized_data = {
+            'header': {
+                'stamp': {
+                    'sec': msg.header.stamp.sec,
+                    'nanosec': msg.header.stamp.nanosec,
+                },
+                'frame_id': msg.header.frame_id
+            },
+            'linear_velocity': msg.linear_velocity,
+            'steering_angle': msg.steering_angle,
+            'vehicle_state': msg.vehicle_state,
+            'control_mode': msg.control_mode,
+            'error_code': msg.error_code,
+            'battery_voltage': msg.battery_voltage,
+            'actuator_states': [
+                {
+                    'motor_id': actuator.motor_id,
+                    'rpm': actuator.rpm,
+                    'current': actuator.current,
+                    'pulse_count': actuator.pulse_count,
+                    'driver_voltage': actuator.driver_voltage,
+                    'driver_temperature': actuator.driver_temperature,
+                    'motor_temperature': actuator.motor_temperature,
+                    'driver_state': actuator.driver_state
+                } for actuator in msg.actuator_states
+            ]
+        }
+        self.details['hunter_status'] = serialized_data
 
         battery = Float32()
         battery.data = msg.battery_voltage
@@ -301,7 +317,7 @@ class AutonomyMetricsLogger(Node):
         control_mode = String()
         if msg.control_mode == 3: #this is manual mode in hunter
             control_mode.data = self.MAN
-        elif msg.control_mode == 1: #this is auto mode in hunter
+        elif msg.control_mode == 1 or msg.control_mode == 0: #this is auto mode in hunter
             control_mode.data = self.AUTO
         self.control_mode_callback(control_mode)
 
