@@ -57,7 +57,7 @@ class AutonomyMetricsLogger(Node):
         self.mongo_port = None
         self.aoc_scenario_path = ''
         self.aoc_navigation_path = ''
-        self.mdbi = 0  # Mean Distance Between Incidents
+        self.mdbi = None  # Mean Distance Between Incidents
         self.incidents = 0
         self.previous_x = None
         self.previous_y = None
@@ -192,6 +192,9 @@ class AutonomyMetricsLogger(Node):
         self.db_mgr.update_distance(self.distance)
         self.db_mgr.update_incidents(self.incidents)
         self.db_mgr.update_autonomous_distance(self.autonomous_distance)
+
+        self.mdbi = float(self.distance) / float(self.incidents) if self.incidents != 0 else 0.0
+        self.db_mgr.update_mdbi(self.mdbi)
 
     def battery_level_callback(self, msg):
         self.details['battery_voltage'] = msg.data
