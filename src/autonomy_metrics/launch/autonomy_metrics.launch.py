@@ -16,6 +16,8 @@ def generate_launch_description():
     hunter_status = LaunchConfiguration('hunter_status_topic', default='/hunter_status')
     actioned_by_coordinator_topic = LaunchConfiguration('actioned_by_coordinator_topic', default='/topological_navigation/execute_policy_mode/goal')
     
+    min_distance_threshold = LaunchConfiguration('min_distance_threshold', default='0.2')
+
     # Path to the scenario and navigation repos
     aoc_scenario_path = LaunchConfiguration('aoc_scenario_path', default='/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario')
     aoc_navigation_path = LaunchConfiguration('aoc_navigation_path', default='/home/ros/aoc_strawberry_scenario_ws/src/aoc_navigation')
@@ -38,6 +40,9 @@ def generate_launch_description():
             'hunter_status_topic', default_value=hunter_status, description='hunter status topic'),
         DeclareLaunchArgument(
             'actioned_by_coordinator_topic', default_value=actioned_by_coordinator_topic, description=''),
+        
+        DeclareLaunchArgument(
+            'min_distance_threshold', default_value=min_distance_threshold, description=''),
         
         DeclareLaunchArgument(
             'aoc_scenario_path', default_value=aoc_scenario_path, description='path to aoc scenario'),

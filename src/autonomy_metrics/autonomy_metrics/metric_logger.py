@@ -61,13 +61,14 @@ class AutonomyMetricsLogger(Node):
         self.incidents = 0
         self.previous_x = None
         self.previous_y = None
-        self.first_gps_fix = True
+        self.init_pose = True
+        self.first_gps_fix_received = False
         self.tasks_received_from_coordinator = 0
         self.distance = 0  # Total traveled distance in meters
         self.autonomous_distance = 0
         self.autonomous_time = 0  # Total time spent in autonomous mode (in seconds)
         self.autonomous_start_time = None  # Time when autonomous mode started
-
+        self.min_distance_threshold = 0.2 #meters
         self.AUTO = 'Autonomous'
         self.MAN = 'Manual'
 
@@ -128,6 +129,11 @@ class AutonomyMetricsLogger(Node):
         # Log aoc_scenario_path and aoc_navigation_path
         self.get_logger().info(f"AOC Scenario Path: {self.aoc_scenario_path}")
         self.get_logger().info(f"AOC Navigation Path: {self.aoc_navigation_path}")
+
+
+        self.declare_parameter('min_distance_threshold', 0.2)
+        self.min_distance_threshold = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
+        self.get_logger().info(f"min_distance_threshold: {self.min_distance_threshold}")
 
         param_defaults = {
             'gps_topic': '/gps_base/fix',
@@ -334,26 +340,48 @@ class AutonomyMetricsLogger(Node):
 
         self.details['gps_data'] = gps_data
 
-        if self.first_gps_fix:
-            self.first_gps_fix = False
+        if not self.first_gps_fix_received:
+            self.first_gps_fix_received = True
             self.log_event('First_GNSS_msg', self.details)
 
     def gps_odom_callback(self, msg):
         position = msg.pose.pose.position
 
-        # Calculate the traveled distance
-        if self.previous_x is not None and self.previous_y is not None:
-            dx = position.x - self.previous_x
-            dy = position.y - self.previous_y
-            distance = math.sqrt(dx**2 + dy**2)
-            self.distance += distance
+        if self._initialize_pose(position):
+            return
 
-            # If the robot is in autonomous mode, accumulate the autonomous distance
-            if self.details['operation_mode'] == self.AUTO:
-                self.autonomous_distance += distance
+        distance = self._calculate_distance(position)
 
+        if self._is_significant_distance(distance):
+            self._update_distances(distance, position)
+            # self._log_distance(distance)
+
+    def _initialize_pose(self, position):
+        if self.init_pose:
+            self.init_pose = False
+            self.previous_x = position.x
+            self.previous_y = position.y
+            return True
+        return False
+
+    def _calculate_distance(self, position):
+        dx = position.x - self.previous_x
+        dy = position.y - self.previous_y
+        return math.sqrt(dx**2 + dy**2)
+
+    def _is_significant_distance(self, distance):
+        return distance >= self.min_distance_threshold
+
+    def _update_distances(self, distance, position):
+        self.distance += distance
+        if self.details['operation_mode'] == self.AUTO:
+            self.autonomous_distance += distance
         self.previous_x = position.x
         self.previous_y = position.y
+
+    def _log_distance(self, distance):
+        self.get_logger().info(f"distance: {distance}")
+
 
 
 def main(args=None):
