@@ -114,22 +114,29 @@ class AutonomyMetricsLogger(Node):
         self.mongo_host = self.get_parameter('mongodb_host').get_parameter_value().string_value
         self.mongo_port = self.get_parameter('mongodb_port').get_parameter_value().integer_value
   
+        # Log MongoDB host and port
+        self.get_logger().info(f"MongoDB Host: {self.mongo_host}")
+        self.get_logger().info(f"MongoDB Port: {self.mongo_port}")
+
         # Declare aoc repos path params
-        self.declare_parameter('aoc_scenario_path')
-        self.declare_parameter('aoc_navigation_path')
+        self.declare_parameter('aoc_scenario_path', '')
+        self.declare_parameter('aoc_navigation_path', '')
         # Retrieve the parameters
         self.aoc_scenario_path = self.get_parameter('aoc_scenario_path').get_parameter_value().string_value
-        self.aoc_navigation_path = self.get_parameter('aoc_navigation_path').get_parameter_value().integer_value
+        self.aoc_navigation_path = self.get_parameter('aoc_navigation_path').get_parameter_value().string_value
+
+        # Log aoc_scenario_path and aoc_navigation_path
+        self.get_logger().info(f"AOC Scenario Path: {self.aoc_scenario_path}")
+        self.get_logger().info(f"AOC Navigation Path: {self.aoc_navigation_path}")
 
         param_defaults = {
             'gps_topic': '/gps_base/fix',
             'gps_odom_topic': '/gps_base/odometry',
-            'battery_status_topic': '/diff_drive_controller/battery_status', #dogtooth
-            'estop_status_topic': '/diff_drive_controller/estop_status', #dogtooth
-            'hunter_status_topic': '/hunter_status', #hunter operation mode and other status msgs 
+            'battery_status_topic': '/diff_drive_controller/battery_status', 
+            'estop_status_topic': '/diff_drive_controller/estop_status', 
+            'hunter_status_topic': '/hunter_status',  # Change this line
             'actioned_by_coordinator_topic': '/topological_navigation/execute_policy_mode/goal'
         }
-
         self.params = {}
         for param, default in param_defaults.items():
             self.declare_parameter(param, default)
@@ -143,11 +150,11 @@ class AutonomyMetricsLogger(Node):
         self.create_subscription(Bool, self.params['estop_status_topic'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(HunterStatus, self.params['hunter_status'], self.hunter_status_callback, qos_profile=qos_profile_sensor_data)
+        self.create_subscription(HunterStatus, self.params['hunter_status_topic'], self.hunter_status_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(ExecutePolicyModeGoal, self.params['actioned_by_coordinator_topic'], self.coordinator_callback, qos_profile=qos_profile_sensor_data) 
 
 
-    def get_git_info(repo_path="."):
+    def get_git_info(self, repo_path="."):
         try:
             # Get current commit hash
             commit_hash = subprocess.check_output(
