@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 #! /usr/bin/env python3
 
+import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration
@@ -21,7 +22,7 @@ def generate_launch_description():
 
     # New parameters for MongoDB host and port
     mongodb_host = LaunchConfiguration('mongodb_host', default='localhost')
-    mongodb_port = LaunchConfiguration('mongodb_port', default='27017')
+    mongodb_port = LaunchConfiguration('mongodb_port', default=os.getenv('MONGOD_PORT', '27017'))
 
     return LaunchDescription([
         # Declare Launch Arguments for the existing parameters

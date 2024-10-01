@@ -17,9 +17,9 @@ Email: ibrahim.hroub7@gmail.com
 """
 
 import os
-import git
 import math
 import rclpy
+import subprocess
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Bool, Int8, String
@@ -147,28 +147,53 @@ class AutonomyMetricsLogger(Node):
         self.create_subscription(ExecutePolicyModeGoal, self.params['actioned_by_coordinator_topic'], self.coordinator_callback, qos_profile=qos_profile_sensor_data) 
 
 
-    def get_git_info(self, repo_path="."):
+    def get_git_info(repo_path="."):
         try:
-            repo = git.Repo(repo_path)
-            commit = repo.head.commit
+            # Get current commit hash
+            commit_hash = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=repo_path
+            ).decode().strip()
+
+            # Get current commit message
+            commit_message = subprocess.check_output(
+                ["git", "log", "-1", "--pretty=%B"], cwd=repo_path
+            ).decode().strip()
+
+            # Get current commit author
+            commit_author = subprocess.check_output(
+                ["git", "log", "-1", "--pretty=%an"], cwd=repo_path
+            ).decode().strip()
+
+            # Get current commit date
+            commit_date = subprocess.check_output(
+                ["git", "log", "-1", "--pretty=%ct"], cwd=repo_path
+            ).decode().strip()
+            commit_date = datetime.fromtimestamp(int(commit_date)).strftime('%Y-%m-%d %H:%M:%S')
 
             # Get current branch name
-            branch_name = repo.active_branch.name
+            branch_name = subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path
+            ).decode().strip()
 
             # Get remote URL
-            remote_url = repo.remotes.origin.url if repo.remotes else "No remote found"
+            try:
+                remote_url = subprocess.check_output(
+                    ["git", "config", "--get", "remote.origin.url"], cwd=repo_path
+                ).decode().strip()
+            except subprocess.CalledProcessError:
+                remote_url = "No remote found"
 
             git_info = {
-                "build_version": commit.hexsha[:7],  # Short hash of the latest commit
-                "commit_message": commit.message.strip(),  # Commit message
-                "commit_author": commit.author.name,  # Commit author
-                "commit_date": datetime.fromtimestamp(commit.committed_date).strftime('%Y-%m-%d %H:%M:%S'),  # Commit date
+                "build_version": commit_hash[:7],  # Short hash of the latest commit
+                "commit_message": commit_message,  # Commit message
+                "commit_author": commit_author,  # Commit author
+                "commit_date": commit_date,  # Commit date
                 "branch_name": branch_name,  # Current branch name
                 "remote_url": remote_url  # Remote URL
             }
 
             return git_info
-        except git.exc.InvalidGitRepositoryError:
+        except subprocess.CalledProcessError:
             return {
                 "build_version": "Invalid repository",
                 "commit_message": "",
