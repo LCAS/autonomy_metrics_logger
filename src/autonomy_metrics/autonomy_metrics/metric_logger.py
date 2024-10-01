@@ -106,6 +106,16 @@ class AutonomyMetricsLogger(Node):
         # Initialize session in the database
         self.db_mgr.init_session(env_variables, git_repos)
 
+        # Heartbeat publisher
+        self.heartbeat_publisher = self.create_publisher(Bool, 'mdbi_logger/heartbeat', 10)
+        self.heartbeat_timer = self.create_timer(5.0, self.publish_heartbeat)  # Publish every 5 seconds
+
+    def publish_heartbeat(self):
+        # Create and publish the heartbeat message
+        heartbeat_msg = Bool()
+        heartbeat_msg.data = True  # Set to True to indicate the node is alive
+        self.heartbeat_publisher.publish(heartbeat_msg)
+        self.get_logger().info('Heartbeat published')
 
     def declare_and_get_parameters(self):
         # Declare MongoDB host and port as ROS parameters
