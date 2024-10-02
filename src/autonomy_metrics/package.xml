@@ -11,7 +11,7 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>nav_msgs</depend>
-<!--   <depend>hunter-base</depend> -->
+  <exec_depend>hunter-base</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
