@@ -115,7 +115,7 @@ class AutonomyMetricsLogger(Node):
         heartbeat_msg = Bool()
         heartbeat_msg.data = True  # Set to True to indicate the node is alive
         self.heartbeat_publisher.publish(heartbeat_msg)
-        self.get_logger().info('Heartbeat published')
+        self.get_logger().debug('Heartbeat published')
 
     def declare_and_get_parameters(self):
         # Declare MongoDB host and port as ROS parameters
