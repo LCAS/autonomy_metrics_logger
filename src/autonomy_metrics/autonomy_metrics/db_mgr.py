@@ -45,7 +45,7 @@ class DatabaseMgr:
         self.sessions_collection = self.db['sessions']
         self.session_id = None
 
-    def init_session(self, env_variables):
+    def init_session(self, env_variables, aoc_repos_info):
         """
         Initializes a new session with the given environmental variables.
 
@@ -62,8 +62,11 @@ class DatabaseMgr:
             "field_name": env_variables['field_name'],
             "application": env_variables['application'],
             "scenario_name": env_variables['scenario_name'],
+            "aoc_repos_info": aoc_repos_info, 
+            "mdbi": None, 
             "incidents": 0,
             "distance": 0,
+            "autonomous_distance": 0,
             "events": []
         }
         result = self.sessions_collection.insert_one(session_document)
@@ -114,5 +117,37 @@ class DatabaseMgr:
         result = self.sessions_collection.update_one(
             {"_id": ObjectId(self.session_id)},
             {"$set": {"distance": distance}}
+        )
+        return result.modified_count > 0
+
+    def update_autonomous_distance(self, autonomous_distance):
+        """
+        Updates the autonomous_distance value of the current session.
+
+        Args:
+            autonomous_distance (float): The new autonomous_distance value.
+
+        Returns:
+            bool: True if the autonomous_distance was updated successfully, False otherwise.
+        """
+        result = self.sessions_collection.update_one(
+            {"_id": ObjectId(self.session_id)},
+            {"$set": {"autonomous_distance": autonomous_distance}}
+        )
+        return result.modified_count > 0
+    
+    def update_mdbi(self, mdbi):
+        """
+        Updates the mdbi value of the current session.
+
+        Args:
+            mdbi (float): The new mdbi value.
+
+        Returns:
+            bool: True if the mdbi was updated successfully, False otherwise.
+        """
+        result = self.sessions_collection.update_one(
+            {"_id": ObjectId(self.session_id)},
+            {"$set": {"mdbi": mdbi}}
         )
         return result.modified_count > 0
