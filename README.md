@@ -1,19 +1,21 @@
-# MDBI Logger Node
+# Autonomy Metrics Logger Node
 
-MDBI Logger is a ROS2 node designed to log robot events and calculate the Mean Distance Between Incidents (MDBI). The node subscribes to various topics to gather data such as GPS coordinates, battery status, and emergency stop status, and logs these events to a database.
+The Autonomy Metrics Logger is a ROS2 node that tracks various robot events and computes the **Mean Distance Between Incidents (MDBI)**. This node monitors topics such as GPS, odometry, battery status, and emergency stop status to log incidents and key metrics into a MongoDB database.
 
 ## Features
 
-- **Calculate MDBI**: Computes the mean distance between incidents based on the robot's GPS data.
-- **Event Logging**: Logs significant events such as emergency stops and operation mode changes.
-- **Database Integration**: Stores event logs and distance metrics in a database.
-
+- **MDBI Calculation**: Computes the Mean Distance Between Incidents based on traveled distance and logged incidents.
+- **Autonomous Mode Tracking**: Records the time spent and distance covered in autonomous mode.
+- **Event Logging**: Logs critical events like emergency stops, manual overrides, and coordinator tasks.
+- **Database Integration**: Uses MongoDB to store event logs, distances, and operational details of the robot.
+- **Heartbeat Signal**: Publishes a heartbeat message every 5 seconds to indicate the node is alive.
+- **Git Repositories Logging**: Captures and stores Git information of the active repositories for traceability.
 
 ## Usage
 
 1. **Set Environment Variables:**
 
-    Set the following environment variables to configure your robot's session:
+   Configure the robot session by setting the following environment variables:
 
     ```sh
     export ROBOT_NAME=<your-robot-name>
@@ -31,22 +33,34 @@ MDBI Logger is a ROS2 node designed to log robot events and calculate the Mean D
 
 ## Parameters
 
-The node uses the following parameters, which can be overridden:
+The node uses the following ROS parameters, which can be customized:
 
+- `mongodb_host` (default: `localhost`): MongoDB server host.
+- `mongodb_port` (default: `27017`): MongoDB server port.
+- `aoc_scenario_path` (default: `""`): Path to the AOC scenario repository.
+- `aoc_navigation_path` (default: `""`): Path to the AOC navigation repository.
+- `min_distance_threshold` (default: `0.2`): Minimum distance threshold for recording traveled distance (in meters).
 - `gps_topic` (default: `/gps_base/fix`)
 - `gps_odom_topic` (default: `/gps_base/odometry`)
-- `battery_status` (default: `/battery_status`)
-- `estop_status` (default: `/estop_status`)
+- `battery_status_topic` (default: `/diff_drive_controller/battery_status`)
+- `estop_status_topic` (default: `/diff_drive_controller/estop_status`)
+- `hunter_status_topic` (default: `/hunter_status`)
+- `actioned_by_coordinator_topic` (default: `/topological_navigation/execute_policy_mode/goal`)
 
 ## Node Details
 
 ### Subscriptions
 
-- **GPS Data** (`/gps_base/fix`): Receives GPS data of the robot.
-- **Odometry Data** (`/gps_base/odometry`): Receives odometry data for distance calculation.
-- **Battery Status** (`/battery_status`): Monitors the battery level.
-- **Emergency Stop Status** (`/estop_status`): Monitors the emergency stop status.
+- **GPS Data** (`/gps_base/fix`): Receives and logs GPS data of the robot.
+- **Odometry Data** (`/gps_base/odometry`): Monitors odometry data to calculate traveled distance.
+- **Battery Status** (`/diff_drive_controller/battery_status`): Logs battery level information.
+- **Emergency Stop Status** (`/diff_drive_controller/estop_status`): Monitors and logs emergency stop events.
+- **Hunter Status** (`/hunter_status`): Tracks the robot's current status, including operation mode and battery voltage.
+- **Coordinator Task** (`/topological_navigation/execute_policy_mode/goal`): Logs tasks received from the coordinator.
 
+### Publications
+
+- **Heartbeat** (`mdbi_logger/heartbeat`): Publishes a signal every 5 seconds to indicate node activity.
 
 ## License
 
