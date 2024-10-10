@@ -24,11 +24,18 @@ from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Bool, Int8, String
 from nav_msgs.msg import Odometry
-from hunter_msgs.msg import HunterStatus
 from topological_navigation_msgs.msg import ExecutePolicyModeGoal
 from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
 from datetime import datetime, timezone
 from rclpy.qos import qos_profile_sensor_data
+
+# Try to import HunterStatus and handle if it is unavailable
+try:
+    from hunter_msgs.msg import HunterStatus
+    HUNTER_MSG_AVAILABLE = True
+except ImportError:
+    HUNTER_MSG_AVAILABLE = False
+    print("Warning: hunter_msgs.HunterStatus is not available. Hunter status callbacks will be disabled.")
 
 
 class AutonomyMetricsLogger(Node):
@@ -166,9 +173,12 @@ class AutonomyMetricsLogger(Node):
         self.create_subscription(Bool, self.params['estop_status_topic'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(HunterStatus, self.params['hunter_status_topic'], self.hunter_status_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(ExecutePolicyModeGoal, self.params['actioned_by_coordinator_topic'], self.coordinator_callback, qos_profile=qos_profile_sensor_data) 
-
+        # Only subscribe to hunter status if the message is available
+        if HUNTER_MSG_AVAILABLE:
+            self.create_subscription(HunterStatus, self.params['hunter_status_topic'], self.hunter_status_callback, qos_profile=qos_profile_sensor_data)
+        else:
+            self.get_logger().warn("HunterStatus message not available, skipping hunter status subscription.")
 
     def get_git_info(self, repo_path="."):
         try:
