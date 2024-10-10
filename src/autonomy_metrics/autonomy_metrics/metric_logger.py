@@ -108,7 +108,7 @@ class AutonomyMetricsLogger(Node):
 
         # Heartbeat publisher
         self.heartbeat_publisher = self.create_publisher(Bool, 'mdbi_logger/heartbeat', 10)
-        self.heartbeat_timer = self.create_timer(5.0, self.publish_heartbeat)  # Publish every 5 seconds
+        self.heartbeat_timer = self.create_timer(1.0, self.publish_heartbeat)  # Publish every 5 seconds
 
     def publish_heartbeat(self):
         # Create and publish the heartbeat message
