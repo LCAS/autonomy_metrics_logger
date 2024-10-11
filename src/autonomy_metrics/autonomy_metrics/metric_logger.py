@@ -37,6 +37,13 @@ except ImportError:
     HUNTER_MSG_AVAILABLE = False
     print("Warning: hunter_msgs.HunterStatus is not available. Hunter status callbacks will be disabled.")
 
+# Try to import DogroothStatus and handle if it is unavailable
+try:
+    from dogtooth_msgs.msg import DogtoothStatus
+    DOGTOOTH_MSG_AVAILABLE = True
+except ImportError:
+    DOGTOOTH_MSG_AVAILABLE = False
+    print("Warning: hunter_msgs.HunterStatus is not available. Hunter status callbacks will be disabled.")
 
 class AutonomyMetricsLogger(Node):
     """
@@ -117,6 +124,12 @@ class AutonomyMetricsLogger(Node):
         self.heartbeat_publisher = self.create_publisher(Bool, 'mdbi_logger/heartbeat', 10)
         self.heartbeat_timer = self.create_timer(1.0, self.publish_heartbeat)  # Publish every 5 seconds
 
+        # Add publishers for distance, incidents, and speed
+        self.distance_publisher = self.create_publisher(Float32, 'mdbi_logger/total_traveled_distance', 10)
+        self.incidents_publisher = self.create_publisher(Int8, 'mdbi_logger/total_incidents', 10)
+        self.speed_publisher = self.create_publisher(Float32, 'mdbi_logger/robot_speed', 10)
+        self.battery_publisher = self.create_publisher(Float32, 'mdbi_logger/battery_level', 10)
+
     def publish_heartbeat(self):
         # Create and publish the heartbeat message
         heartbeat_msg = Bool()
@@ -158,6 +171,7 @@ class AutonomyMetricsLogger(Node):
             'battery_status_topic': '/diff_drive_controller/battery_status', 
             'estop_status_topic': '/diff_drive_controller/estop_status', 
             'hunter_status_topic': '/hunter_status',  # Change this line
+            'dogtooth_status_topic': '/dogtooth_status',  # Change this line
             'actioned_by_coordinator_topic': '/topological_navigation/execute_policy_mode/goal'
         }
         self.params = {}
@@ -179,6 +193,11 @@ class AutonomyMetricsLogger(Node):
             self.create_subscription(HunterStatus, self.params['hunter_status_topic'], self.hunter_status_callback, qos_profile=qos_profile_sensor_data)
         else:
             self.get_logger().warn("HunterStatus message not available, skipping hunter status subscription.")
+        # Only subscribe to dogtooth status if the message is available
+        if DOGTOOTH_MSG_AVAILABLE:
+            self.create_subscription(DogtoothStatus, self.params['dogtooth_status_topic'], self.dogtooth_status_callback, qos_profile=qos_profile_sensor_data)
+        else:
+            self.get_logger().warn("DogtoothStatus message not available, skipping dogtooth status subscription.")
 
     def get_git_info(self, repo_path="."):
         try:
@@ -236,7 +255,6 @@ class AutonomyMetricsLogger(Node):
                 "remote_url": "Unknown"
             }
 
-
     def log_event(self, msg='', details={}):
         event_time = datetime.now(tz=timezone.utc)
         event = {
@@ -246,7 +264,12 @@ class AutonomyMetricsLogger(Node):
         }
         self.db_mgr.add_event(event)
 
-        # Update the total traveled distance and number of incidents in the main document session
+        # Publish the total number of incidents
+        incidents_msg = Int8()
+        incidents_msg.data = self.incidents
+        self.incidents_publisher.publish(incidents_msg)
+
+        # Also update MDBI and other metrics
         self.db_mgr.update_distance(self.distance)
         self.db_mgr.update_incidents(self.incidents)
         self.db_mgr.update_autonomous_distance(self.autonomous_distance)
@@ -256,6 +279,10 @@ class AutonomyMetricsLogger(Node):
 
     def battery_level_callback(self, msg):
         self.details['battery_voltage'] = msg.data
+        battery_msg = Float32()
+        battery_msg.data = msg.data
+        self.battery_publisher.publish(battery_msg)
+        self.get_logger().debug(f"Battery level published: {msg.data}")
 
     def estop_sub_callback(self, msg):
         if msg.data != self.details['estop']:
@@ -347,6 +374,36 @@ class AutonomyMetricsLogger(Node):
             control_mode.data = self.AUTO
         self.control_mode_callback(control_mode)
 
+    def dogtooth_status_callback(self, msg):
+        # Serialize HunterStatus into a dictionary
+        serialized_data = {
+            'header': {
+                'stamp': {
+                    'sec': msg.header.stamp.sec,
+                    'nanosec': msg.header.stamp.nanosec,
+                },
+                'frame_id': msg.header.frame_id
+            },
+            'linear_velocity': msg.linear_velocity,
+            'angular_velocity': msg.angular_velocity,
+            'vehicle_state': msg.vehicle_state,
+            'control_mode': msg.control_mode,
+            'error_code': msg.error_code,
+            'battery_voltage': msg.battery_voltage,
+        }
+        self.details['dogtooth_status'] = serialized_data
+
+        battery = Float32()
+        battery.data = msg.battery_voltage
+        self.battery_level_callback(battery)
+
+        control_mode = String()
+        if msg.control_mode == 3: #this is manual mode in hunter
+            control_mode.data = self.MAN
+        elif msg.control_mode == 1 or msg.control_mode == 0: #this is auto mode in hunter
+            control_mode.data = self.AUTO
+        self.control_mode_callback(control_mode)
+
     def gps_fix_callback(self, msg):
         gps_data = {
             'latitude': msg.latitude,
@@ -393,11 +450,41 @@ class AutonomyMetricsLogger(Node):
         return distance >= self.min_distance_threshold
 
     def _update_distances(self, distance, position):
+        current_time = self.get_clock().now()
+
+        # Calculate time difference between the last update and now
+        if hasattr(self, 'previous_time'):
+            time_diff = (current_time - self.previous_time).nanoseconds * 1e-9  # Convert to seconds
+            speed = distance / time_diff if time_diff > 0 else 0.0
+        else:
+            speed = 0.0
+
+        # Update the previous time
+        self.previous_time = current_time
+
+        # Update the total traveled distance
         self.distance += distance
         if self.details['operation_mode'] == self.AUTO:
             self.autonomous_distance += distance
         self.previous_x = position.x
         self.previous_y = position.y
+
+        # Publish the distance and speed
+        self.publish_distance_and_speed(distance, speed)
+
+    def publish_distance_and_speed(self, distance, speed):
+        # Publish total traveled distance
+        distance_msg = Float32()
+        distance_msg.data = self.distance
+        self.distance_publisher.publish(distance_msg)
+
+        # Publish robot speed
+        speed_msg = Float32()
+        speed_msg.data = speed
+        self.speed_publisher.publish(speed_msg)
+
+        # Log the speed and distance
+        self.get_logger().info(f"Traveled distance: {self.distance} meters, Speed: {speed} m/s")
 
     def _log_distance(self, distance):
         self.get_logger().info(f"distance: {distance}")
