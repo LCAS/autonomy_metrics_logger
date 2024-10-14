@@ -484,10 +484,10 @@ class AutonomyMetricsLogger(Node):
         self.speed_publisher.publish(speed_msg)
 
         # Log the speed and distance
-        self.get_logger().info(f"Traveled distance: {self.distance} meters, Speed: {speed} m/s")
+        self.get_logger().debug(f"Traveled distance: {self.distance} meters, Speed: {speed} m/s")
 
     def _log_distance(self, distance):
-        self.get_logger().info(f"distance: {distance}")
+        self.get_logger().debug(f"distance: {distance}")
 
 
 
