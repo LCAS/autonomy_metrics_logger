@@ -431,7 +431,11 @@ class AutonomyMetricsLogger(Node):
 
         if self._is_significant_distance(distance):
             self._update_distances(distance, position)
-            # self._log_distance(distance)
+        else:
+            # Publish robot speed
+            speed_msg = Float32()
+            speed_msg.data = 0.0
+            self.speed_publisher.publish(speed_msg) 
 
     def _initialize_pose(self, position):
         if self.init_pose:
@@ -482,6 +486,9 @@ class AutonomyMetricsLogger(Node):
         speed_msg = Float32()
         speed_msg.data = speed
         self.speed_publisher.publish(speed_msg)
+
+        self.db_mgr.update_distance(self.distance)
+        self.db_mgr.update_autonomous_distance(self.autonomous_distance)
 
         # Log the speed and distance
         self.get_logger().debug(f"Traveled distance: {self.distance} meters, Speed: {speed} m/s")
