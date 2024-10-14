@@ -85,6 +85,8 @@ class AutonomyMetricsLogger(Node):
         self.min_distance_threshold = 0.2 #meters
         self.AUTO = 'Autonomous'
         self.MAN = 'Manual'
+        self.prev_speed = 0.0
+        self.speed = 0.0
 
         # Init some variables 
         self.details = {}
@@ -122,7 +124,7 @@ class AutonomyMetricsLogger(Node):
 
         # Heartbeat publisher
         self.heartbeat_publisher = self.create_publisher(Bool, 'mdbi_logger/heartbeat', 10)
-        self.heartbeat_timer = self.create_timer(1.0, self.publish_heartbeat)  # Publish every 5 seconds
+        self.heartbeat_timer = self.create_timer(1.0, self.publish_heartbeat)  # Publish every 1 seconds
 
         # Add publishers for distance, incidents, and speed
         self.distance_publisher = self.create_publisher(Float32, 'mdbi_logger/total_traveled_distance', 10)
@@ -136,6 +138,11 @@ class AutonomyMetricsLogger(Node):
         heartbeat_msg.data = True  # Set to True to indicate the node is alive
         self.heartbeat_publisher.publish(heartbeat_msg)
         self.get_logger().debug('Heartbeat published')
+
+        if self.prev_speed != self.speed:
+            self.prev_speed = self.speed
+        else:
+            self.publish_speed(0.0)
 
     def declare_and_get_parameters(self):
         # Declare MongoDB host and port as ROS parameters
@@ -431,11 +438,6 @@ class AutonomyMetricsLogger(Node):
 
         if self._is_significant_distance(distance):
             self._update_distances(distance, position)
-        else:
-            # Publish robot speed
-            speed_msg = Float32()
-            speed_msg.data = 0.0
-            self.speed_publisher.publish(speed_msg) 
 
     def _initialize_pose(self, position):
         if self.init_pose:
@@ -459,9 +461,9 @@ class AutonomyMetricsLogger(Node):
         # Calculate time difference between the last update and now
         if hasattr(self, 'previous_time'):
             time_diff = (current_time - self.previous_time).nanoseconds * 1e-9  # Convert to seconds
-            speed = distance / time_diff if time_diff > 0 else 0.0
+            self.speed = distance / time_diff if time_diff > 0 else 0.0
         else:
-            speed = 0.0
+            self.speed = 0.0
 
         # Update the previous time
         self.previous_time = current_time
@@ -474,24 +476,27 @@ class AutonomyMetricsLogger(Node):
         self.previous_y = position.y
 
         # Publish the distance and speed
-        self.publish_distance_and_speed(distance, speed)
+        self.publish_distance(self.distance)
+        self.publish_speed(self.speed)
 
-    def publish_distance_and_speed(self, distance, speed):
+    def publish_distance(self, distance):
         # Publish total traveled distance
         distance_msg = Float32()
-        distance_msg.data = self.distance
+        distance_msg.data = distance
         self.distance_publisher.publish(distance_msg)
-
-        # Publish robot speed
-        speed_msg = Float32()
-        speed_msg.data = speed
-        self.speed_publisher.publish(speed_msg)
 
         self.db_mgr.update_distance(self.distance)
         self.db_mgr.update_autonomous_distance(self.autonomous_distance)
 
         # Log the speed and distance
-        self.get_logger().debug(f"Traveled distance: {self.distance} meters, Speed: {speed} m/s")
+        self.get_logger().debug(f"Traveled distance: {self.distance} meters")
+
+    def publish_speed(self, speed):
+        # Publish robot speed
+        speed_msg = Float32()
+        speed_msg.data = speed
+        self.speed_publisher.publish(speed_msg)
+
 
     def _log_distance(self, distance):
         self.get_logger().debug(f"distance: {distance}")
