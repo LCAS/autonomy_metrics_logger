@@ -41,7 +41,7 @@ The node uses the following ROS parameters, which can be customized:
 - `aoc_navigation_path` (default: `""`): Path to the AOC navigation repository.
 - `min_distance_threshold` (default: `0.2`): Minimum distance threshold for recording traveled distance (in meters).
 - `gps_topic` (default: `/gps_base/fix`)
-- `gps_odom_topic` (default: `/gps_base/odometry`)
+- `odometry_topic` (default: `/diff_drive_controller/odom`)
 - `battery_status_topic` (default: `/diff_drive_controller/battery_status`)
 - `estop_status_topic` (default: `/diff_drive_controller/estop_status`)
 - `hunter_status_topic` (default: `/hunter_status`)
@@ -52,7 +52,7 @@ The node uses the following ROS parameters, which can be customized:
 ### Subscriptions
 
 - **GPS Data** (`/gps_base/fix`): Receives and logs GPS data of the robot.
-- **Odometry Data** (`/gps_base/odometry`): Monitors odometry data to calculate traveled distance.
+- **Odometry Data** (`/diff_drive_controller/odom`): Monitors odometry data to calculate traveled distance.
 - **Battery Status** (`/diff_drive_controller/battery_status`): Logs battery level information.
 - **Emergency Stop Status** (`/diff_drive_controller/estop_status`): Monitors and logs emergency stop events.
 - **Hunter Status** (`/hunter_status`): Tracks the robot's current status, including operation mode and battery voltage.
