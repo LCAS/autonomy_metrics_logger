@@ -10,7 +10,7 @@ from launch.actions import DeclareLaunchArgument
 def generate_launch_description():
 
     gps_topic = LaunchConfiguration('gps_topic', default='/gps_base/fix')
-    gps_odom_topic = LaunchConfiguration('gps_odom_topic', default='/gps_base/odometry')
+    odometry_topic = LaunchConfiguration('odometry_topic', default='/diff_drive_controller/odom')
     battery_status = LaunchConfiguration('battery_status_topic', default='/diff_drive_controller/battery_status')
     estop_status = LaunchConfiguration('estop_status_topic', default='/diff_drive_controller/estop_status')
     hunter_status = LaunchConfiguration('hunter_status_topic', default='/hunter_status')
@@ -31,7 +31,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'gps_topic', default_value=gps_topic, description='GPS topic for base fix'),
         DeclareLaunchArgument(
-            'gps_odom_topic', default_value=gps_odom_topic, description='GPS topic for odometry'),
+            'odometry_topic', default_value=odometry_topic, description='A topic for odometry'),
         DeclareLaunchArgument(
             'battery_status_topic', default_value=battery_status, description='Battery status topic'),
         DeclareLaunchArgument(
@@ -62,7 +62,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'gps_topic': gps_topic,
-                'gps_odom_topic': gps_odom_topic,
+                'odometry_topic': odometry_topic,
                 'battery_status_topic': battery_status,
                 'estop_status_topic': estop_status,
                 'hunter_status_topic': hunter_status,
