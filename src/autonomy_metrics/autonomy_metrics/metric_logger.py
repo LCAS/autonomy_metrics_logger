@@ -174,7 +174,7 @@ class AutonomyMetricsLogger(Node):
 
         param_defaults = {
             'gps_topic': '/gps_base/fix',
-            'gps_odom_topic': '/gps_base/odometry',
+            'odometry_topic': '/diff_drive_controller/odom',
             'battery_status_topic': '/diff_drive_controller/battery_status', 
             'estop_status_topic': '/diff_drive_controller/estop_status', 
             'hunter_status_topic': '/hunter_status',  # Change this line
@@ -193,7 +193,7 @@ class AutonomyMetricsLogger(Node):
         self.create_subscription(Float32, self.params['battery_status_topic'], self.battery_level_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(Bool, self.params['estop_status_topic'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(Odometry, self.params['gps_odom_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
+        self.create_subscription(Odometry, self.params['odometry_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
         self.create_subscription(ExecutePolicyModeGoal, self.params['actioned_by_coordinator_topic'], self.coordinator_callback, qos_profile=qos_profile_sensor_data) 
         # Only subscribe to hunter status if the message is available
         if HUNTER_MSG_AVAILABLE:
