@@ -40,7 +40,12 @@ class DatabaseMgr:
             host (str): The hostname or IP address of the MongoDB server.
             port (int): The port of the MongoDB server.
         """
-        self.client = MongoClient(f'mongodb://{host}:{port}/')
+        self.client = MongoClient(
+            f'mongodb://{host}:{port}/',
+            # serverSelectionTimeoutMS=-1,  # Disable server selection timeout
+            # socketTimeoutMS=-1,           # Disable socket timeout
+            connectTimeoutMS=None           # Disable connection timeout
+        )      
         self.db = self.client[database_name]
         self.sessions_collection = self.db['sessions']
         self.session_id = None
