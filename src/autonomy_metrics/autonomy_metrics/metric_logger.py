@@ -109,9 +109,20 @@ class AutonomyMetricsLogger(Node):
         self.db_mgr = DBMgr(host=self.mongo_host, port=self.mongo_port)
 
         # Get aoc git repos info 
-        aoc_scenario_git_info = self.get_git_info(self.aoc_scenario_path)
-        aoc_navigation_git_info = self.get_git_info(self.aoc_navigation_path)
-        
+        try:
+            self.get_logger().info("Retrieving AOC git repository information...")
+            aoc_scenario_git_info = self.get_git_info(self.aoc_scenario_path)
+        except Exception as e:
+            self.get_logger().error(f"Error while logging git info: {e}")
+            aoc_scenario_git_info = None
+
+        try:
+            self.get_logger().info("Retrieving AOC Navigation git repository information...")
+            aoc_navigation_git_info = self.get_git_info(self.aoc_navigation_path)
+        except Exception as e:
+            self.get_logger().error(f"Error while logging git info: {e}")
+            aoc_navigation_git_info = None
+
         git_repos = []
         git_repos.append({'aoc_scenario_git_info': aoc_scenario_git_info})
         git_repos.append({'aoc_navigation_git_info': aoc_navigation_git_info})
