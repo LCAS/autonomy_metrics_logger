@@ -1,0 +1,41 @@
+git_repos:
+  aoc_scenario_path: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario"
+
+topics:
+  - name: "/gps_base/fix"
+    type: "sensor_msgs/msg/NavSatFix"
+    log_fields:
+      - "latitude"
+      - "longitude"
+      - "altitude"
+    publish:
+      enable: true
+      topic: "mdbi_logger/gps_alt"
+      type: "std_msgs/msg/Float32"
+      field: "altitude"
+
+  - name: "/gophar_vehicle_controller/odometry"
+    type: "nav_msgs/msg/Odometry"
+    role: "odometry"
+    log_fields:
+      - "pose.pose.position.x"
+      - "pose.pose.position.y"
+      - "twist.twist.linear.x"
+    publish:
+      enable: false
+
+  - name: "/gophar/system_status"
+    type: "dynium_gophar_interfaces/msg/SystemStatus"
+    log_fields:
+      - "fault_shutdown"
+      - "hv_on"
+      - "ignition_switch"
+      - "charger_interlock"
+      - "battery_percentage"
+
+    publish:
+      enable: true
+      topic: "mdbi_logger/battery_level"
+      type: "std_msgs/msg/Float32"
+      field: "battery_percentage"
+

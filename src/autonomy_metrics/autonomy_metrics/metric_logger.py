@@ -1,99 +1,123 @@
-
+#!/usr/bin/env python3
 """
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-Author: Ibrahim Hroob
-Email: ibrahim.hroub7@gmail.com
+YAML-driven AutonomyMetricsLogger
+Author: Ibrahim Hroob (adapted)
 """
 
 import os
 import math
-import rclpy
 import subprocess
-from rclpy.node import Node
-from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Float32, Bool, Int8, String
-from nav_msgs.msg import Odometry
-from topological_navigation_msgs.msg import ExecutePolicyModeGoal
-from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
+import yaml
 from datetime import datetime, timezone
+from importlib import import_module
+
+import rclpy
+from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
-# Try to import HunterStatus and handle if it is unavailable
-try:
-    from hunter_msgs.msg import HunterStatus
-    HUNTER_MSG_AVAILABLE = True
-except ImportError:
-    HUNTER_MSG_AVAILABLE = False
-    print("Warning: hunter_msgs.HunterStatus is not available. Hunter status callbacks will be disabled.")
+# keep a few explicit imports used by default publishers (std msgs)
+from std_msgs.msg import Bool, Float32, Int8, String
 
-# Try to import DogroothStatus and handle if it is unavailable
-try:
-    from dogtooth_msgs.msg import DogtoothStatus
-    DOGTOOTH_MSG_AVAILABLE = True
-except ImportError:
-    DOGTOOTH_MSG_AVAILABLE = False
-    print("Warning: hunter_msgs.HunterStatus is not available. Hunter status callbacks will be disabled.")
+# Optional: existing DB manager
+from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
+
+# Helper: dynamic message import
+def import_msg_type(type_str: str):
+    """
+    Accepts strings like 'sensor_msgs/msg/NavSatFix' and returns the message class.
+    """
+    try:
+        parts = type_str.split('/')
+        if len(parts) != 3:
+            raise ValueError("Message type must be like 'pkg/msg/MessageName'")
+        pkg, submodule, cls_name = parts
+        module = import_module(f"{pkg}.{submodule}")
+        return getattr(module, cls_name)
+    except Exception as e:
+        raise ImportError(f"Failed to import message type '{type_str}': {e}")
+
+# Helper: get nested attribute (supports attributes and list indices)
+def get_nested_field(obj, path: str):
+    """
+    path examples:
+      - 'pose.pose.position.x'
+      - 'status.status'
+      - 'position_covariance[0]'
+    """
+    try:
+        cur = obj
+        for part in path.split('.'):
+            # support index like field[0]
+            if '[' in part and part.endswith(']'):
+                name, idx = part[:-1].split('[')
+                cur = getattr(cur, name)
+                cur = cur[int(idx)]
+            else:
+                cur = getattr(cur, part)
+        return cur
+    except Exception as e:
+        raise AttributeError(f"Failed to get '{path}': {e}")
 
 class AutonomyMetricsLogger(Node):
-    """
-    A class for logging robot events to calculate MDBI (Mean Distance Between Incidents).
-
-    Attributes:
-        mdbi (float): Mean Distance Between Incidents.
-        distance (float): Traveled distance in meters.
-        db_mgr (DBMgr): Instance of DatabaseMgr for database operations.
-        gps_data (dict): GPS data of the robot.
-        estop (bool): Emergency stop status.
-        battery_level (float): Battery level of the robot.
-        operation_mode (str): Operation mode of the robot.
-        previous_x (float): Previous x-coordinate for distance calculation.
-        previous_y (float): Previous y-coordinate for distance calculation.
-        env_variables (dict): Environmental variables for the robot session.
-    """
-
     def __init__(self):
-        super().__init__('mdbi_logger')
-        self.get_logger().info('Initializing logging node')
+        super().__init__('mdbi_logger_dynamic')
 
-        # Define useful global variables
-        self.mongo_host = None
-        self.mongo_port = None
-        self.aoc_scenario_path = ''
-        self.aoc_navigation_path = ''
-        self.mdbi = None  # Mean Distance Between Incidents
+        # Basic state
+        self.get_logger().info("Starting YAML-driven AutonomyMetricsLogger")
+
+        # Default parameters
+        self.declare_parameter('config_yaml', '')
+        self.declare_parameter('mongodb_host', 'localhost')
+        self.declare_parameter('mongodb_port', 27017)
+        self.declare_parameter('min_distance_threshold', 0.2)
+
+        # Read parameters
+        self.config_path = self.get_parameter('config_yaml').get_parameter_value().string_value
+        self.mongo_host = self.get_parameter('mongodb_host').get_parameter_value().string_value
+        self.mongo_port = self.get_parameter('mongodb_port').get_parameter_value().integer_value
+        self.min_distance_threshold = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
+
+        self.get_logger().info(f"Config path: {self.config_path}")
+        self.get_logger().info(f"Mongo host: {self.mongo_host}, port: {self.mongo_port}")
+        self.get_logger().info(f"min_distance_threshold: {self.min_distance_threshold}")
+
+        # Database manager
+        self.db_mgr = DBMgr(host=self.mongo_host, port=self.mongo_port)
+
+        # Internal metrics state (keep similar to your original node)
+        self.mdbi = None
         self.incidents = 0
+        self.distance = 0.0
+        self.autonomous_distance = 0.0
+        self.autonomous_time = 0.0
+        self.autonomous_start_time = None
+        self.AUTO = 'Autonomous'
+        self.MAN = 'Manual'
+        self.details = {'estop': False, 'operation_mode': self.MAN}
         self.previous_x = None
         self.previous_y = None
         self.init_pose = True
         self.first_gps_fix_received = False
-        self.tasks_received_from_coordinator = 0
-        self.distance = 0  # Total traveled distance in meters
-        self.autonomous_distance = 0
-        self.autonomous_time = 0  # Total time spent in autonomous mode (in seconds)
-        self.autonomous_start_time = None  # Time when autonomous mode started
-        self.min_distance_threshold = 0.2 #meters
-        self.AUTO = 'Autonomous'
-        self.MAN = 'Manual'
         self.prev_speed = 0.0
         self.speed = 0.0
 
-        # Init some variables 
-        self.details = {}
-        self.details['estop'] = False  
-        self.details['operation_mode'] = self.MAN
+        # dynamic structures
+        self.dynamic_subs = []
+        self.dynamic_publishers = {}  # keyed by topic_name -> (publisher, message_class, publish_field)
+        self.topic_cfg_map = {}  # keyed by topic_name -> cfg dict
 
-        # Get robot name and other environmental variables (Group them into a dictionary)
+        # Default static publishers (distance/speed/incidents/heartbeat)
+        self.heartbeat_publisher = self.create_publisher(Bool, 'mdbi_logger/heartbeat', 10)
+        self.heartbeat_timer = self.create_timer(1.0, self.publish_heartbeat)
+        self.distance_publisher = self.create_publisher(Float32, 'mdbi_logger/total_traveled_distance', 10)
+        self.incidents_publisher = self.create_publisher(Int8, 'mdbi_logger/total_incidents', 10)
+        self.speed_publisher = self.create_publisher(Float32, 'mdbi_logger/robot_speed', 10)
+        self.battery_publisher = self.create_publisher(Float32, 'mdbi_logger/battery_level', 10)
+
+        # load yaml config and create dynamic subs/pubs
+        self.load_and_setup_config()
+
+        # initialize DB session
         env_variables = {
             'robot_name': os.getenv('ROBOT_NAME', 'UNDEFINED'),
             'farm_name': os.getenv('FARM_NAME', 'UNDEFINED'),
@@ -101,169 +125,343 @@ class AutonomyMetricsLogger(Node):
             'application': os.getenv('APPLICATION', 'UNDEFINED'),
             'scenario_name': os.getenv('SCENARIO_NAME', 'UNDEFINED'),
         }
-        
-        # Declare and get the ROS parameters, including MongoDB host and port
-        self.declare_and_get_parameters()
-
-        # Initialize DatabaseMgr with the retrieved port
-        self.db_mgr = DBMgr(host=self.mongo_host, port=self.mongo_port)
-
-        # Get aoc git repos info 
-        try:
-            self.get_logger().info("Retrieving AOC git repository information...")
-            aoc_scenario_git_info = self.get_git_info(self.aoc_scenario_path)
-        except Exception as e:
-            self.get_logger().error(f"Error while logging git info: {e}")
-            aoc_scenario_git_info = None
-
-        try:
-            self.get_logger().info("Retrieving AOC Navigation git repository information...")
-            aoc_navigation_git_info = self.get_git_info(self.aoc_navigation_path)
-        except Exception as e:
-            self.get_logger().error(f"Error while logging git info: {e}")
-            aoc_navigation_git_info = None
-
+        # try to capture git info if provided in config
         git_repos = []
-        git_repos.append({'aoc_scenario_git_info': aoc_scenario_git_info})
-        git_repos.append({'aoc_navigation_git_info': aoc_navigation_git_info})
+        try:
+            git_cfg = self.config.get('git_repos', {})
+            for label, p in git_cfg.items():
+                git_repos.append({label: self.get_git_info(p)})
+        except Exception:
+            pass
 
-        # Subscribe to the topics
-        self.create_subscriptions()
-
-        # Initialize session in the database
         self.db_mgr.init_session(env_variables, git_repos)
 
-        # Heartbeat publisher
-        self.heartbeat_publisher = self.create_publisher(Bool, 'mdbi_logger/heartbeat', 10)
-        self.heartbeat_timer = self.create_timer(1.0, self.publish_heartbeat)  # Publish every 1 seconds
+    # -------------------------
+    # Config loading & setup
+    # -------------------------
+    def load_and_setup_config(self):
+        # Load YAML
+        if not self.config_path:
+            raise RuntimeError("Parameter 'config_yaml' must be set to a YAML file path")
 
-        # Add publishers for distance, incidents, and speed
-        self.distance_publisher = self.create_publisher(Float32, 'mdbi_logger/total_traveled_distance', 10)
-        self.incidents_publisher = self.create_publisher(Int8, 'mdbi_logger/total_incidents', 10)
-        self.speed_publisher = self.create_publisher(Float32, 'mdbi_logger/robot_speed', 10)
-        self.battery_publisher = self.create_publisher(Float32, 'mdbi_logger/battery_level', 10)
+        with open(self.config_path, 'r') as f:
+            self.config = yaml.safe_load(f) or {}
 
+        topics = self.config.get('topics', [])
+        if not isinstance(topics, list):
+            raise RuntimeError("'topics' must be a list in YAML config")
+
+        for item in topics:
+            name = item.get('name')
+            type_str = item.get('type')
+            if not name or not type_str:
+                self.get_logger().warning(f"Skipping invalid topic config: {item}")
+                continue
+
+            # store cfg
+            self.topic_cfg_map[name] = item
+
+            # create publisher if requested
+            pub_cfg = item.get('publish', {})
+            if pub_cfg.get('enable', False):
+                try:
+                    pub_msg_cls = import_msg_type(pub_cfg['type'])
+                    pub_topic = pub_cfg['topic']
+                    publisher = self.create_publisher(pub_msg_cls, pub_topic, 10)
+                    self.dynamic_publishers[name] = (publisher, pub_msg_cls, pub_cfg.get('field'))
+                except Exception as e:
+                    self.get_logger().error(f"Failed to create publisher for {name}: {e}")
+                    self.dynamic_publishers[name] = None
+            else:
+                self.dynamic_publishers[name] = None
+
+            # create subscription
+            try:
+                msg_cls = import_msg_type(type_str)
+            except Exception as e:
+                self.get_logger().error(f"Failed to import msg type {type_str} for topic {name}: {e}")
+                continue
+
+            # Determine if this topic has a special role
+            role = item.get('role', '').lower()
+            if role == 'odometry':
+                # special odometry callback to compute distances
+                sub_cb = lambda msg, tn=name: self.odom_role_callback(tn, msg)
+            elif role == 'control_mode':
+                sub_cb = lambda msg, tn=name: self.control_mode_role_callback(tn, msg)
+            elif role == 'estop':
+                sub_cb = lambda msg, tn=name: self.estop_role_callback(tn, msg)
+            else:
+                # generic callback
+                log_fields = item.get('log_fields', [])
+                sub_cb = lambda msg, tn=name, lf=log_fields: self.generic_callback(tn, msg, lf)
+
+            self.create_subscription(msg_cls, name, sub_cb, qos_profile_sensor_data)
+            self.get_logger().info(f"Subscribed to {name} as {type_str} (role={role})")
+
+    # -------------------------
+    # Role-specific callbacks
+    # -------------------------
+    def odom_role_callback(self, topic_name, msg):
+        # Expect msg is nav_msgs/msg/Odometry
+        try:
+            pos = msg.pose.pose.position
+        except Exception as e:
+            self.get_logger().error(f"Odometry callback failed to extract position: {e}")
+            return
+
+        # Generic logging of configured fields
+        cfg = self.topic_cfg_map.get(topic_name, {})
+        for f in cfg.get('log_fields', []):
+            try:
+                v = get_nested_field(msg, f)
+                # attach to details and log a DB event if requested
+                self.details.setdefault('odom_fields', {})[f] = v
+            except Exception:
+                self.get_logger().debug(f"Could not read odom field {f}")
+
+        # distance initialization
+        if self.init_pose:
+            self.init_pose = False
+            self.previous_x = pos.x
+            self.previous_y = pos.y
+            return
+
+        dx = pos.x - self.previous_x
+        dy = pos.y - self.previous_y
+        dist = math.sqrt(dx*dx + dy*dy)
+
+        if dist < self.min_distance_threshold:
+            return
+
+        # compute speed (time based)
+        current_time = self.get_clock().now()
+        if hasattr(self, 'previous_time'):
+            time_diff = (current_time - self.previous_time).nanoseconds * 1e-9
+            self.speed = dist / time_diff if time_diff > 0 else 0.0
+        else:
+            self.speed = 0.0
+        self.previous_time = current_time
+
+        self.distance += dist
+        if self.details.get('operation_mode') == self.AUTO:
+            self.autonomous_distance += dist
+
+        self.previous_x = pos.x
+        self.previous_y = pos.y
+
+        # publish metrics
+        self.publish_distance(self.distance)
+        self.publish_speed(self.speed)
+
+        # optionally publish a configured publisher mirroring some field
+        pub_cfg = self.dynamic_publishers.get(topic_name)
+        if pub_cfg:
+            publisher, pub_msg_cls, pub_field = pub_cfg
+            if pub_field:
+                try:
+                    v = get_nested_field(msg, pub_field)
+                    out_msg = pub_msg_cls()
+                    # Common case: std_msgs with .data
+                    if hasattr(out_msg, 'data'):
+                        out_msg.data = v
+                        publisher.publish(out_msg)
+                    else:
+                        # naive assign if same attribute name
+                        for attr in dir(out_msg):
+                            if not attr.startswith('_'):
+                                try:
+                                    setattr(out_msg, attr, v)
+                                    publisher.publish(out_msg)
+                                    break
+                                except Exception:
+                                    continue
+                except Exception as e:
+                    self.get_logger().debug(f"Publish transform failed for {topic_name}: {e}")
+
+    def control_mode_role_callback(self, topic_name, msg):
+        # Expect control mode to be a message containing a field that maps to operation mode string or integer
+        cfg = self.topic_cfg_map.get(topic_name, {})
+        mode_field = cfg.get('mode_field', 'data')  # default to std_msgs/String .data
+        try:
+            val = get_nested_field(msg, mode_field)
+        except Exception as e:
+            self.get_logger().error(f"Control mode: failed to read field {mode_field}: {e}")
+            return
+
+        # interpret val: try to map ints to modes if mapping exists
+        mapping = cfg.get('mode_mapping', {})  # e.g. {"3": "Manual", "1": "Autonomous", "0": "Autonomous"}
+        new_mode = None
+        if isinstance(val, (int, float)):
+            new_mode = mapping.get(str(int(val)), None)
+        elif isinstance(val, str):
+            new_mode = mapping.get(val, val)
+        else:
+            new_mode = str(val)
+
+        if new_mode is None:
+            # fallback: if val is int 3 -> MAN else -> AUTO
+            if isinstance(val, (int, float)) and int(val) == 3:
+                new_mode = self.MAN
+            else:
+                new_mode = self.AUTO
+
+        # emulate previous control_mode_callback behaviour
+        current_time = datetime.now()
+        if new_mode != self.details.get('operation_mode'):
+            previous_mode = self.details.get('operation_mode')
+            self.details['operation_mode'] = new_mode
+            self.get_logger().info(f"operation_mode : {new_mode}")
+
+            if previous_mode == self.AUTO and new_mode == self.MAN:
+                if self.autonomous_start_time is not None:
+                    elapsed_autonomous_time = (current_time - self.autonomous_start_time).total_seconds()
+                    self.autonomous_time += elapsed_autonomous_time
+                    self.details['autonomous_time'] = self.autonomous_time
+                    self.autonomous_start_time = None
+
+            elif new_mode == self.AUTO:
+                self.autonomous_start_time = current_time
+
+            if new_mode == self.MAN:
+                self.incidents += 1
+                self.log_event('Manual_override', self.details)
+            elif new_mode == self.AUTO:
+                self.log_event('Autonomous', self.details)
+
+    def estop_role_callback(self, topic_name, msg):
+        # default expect Bool-like .data
+        cfg = self.topic_cfg_map.get(topic_name, {})
+        estop_field = cfg.get('field', 'data')
+        try:
+            v = get_nested_field(msg, estop_field)
+        except Exception as e:
+            self.get_logger().error(f"Estop: failed to read {estop_field}: {e}")
+            return
+
+        if bool(v) != bool(self.details.get('estop', False)):
+            self.details['estop'] = bool(v)
+            self.get_logger().info(f"Estop status changed to: {self.details['estop']}")
+            if self.details['estop']:
+                self.incidents += 1
+                self.log_event('EMS', self.details)
+
+    # -------------------------
+    # Generic callback
+    # -------------------------
+    def generic_callback(self, topic_name, msg, log_fields):
+        # Log configured fields
+        data = {}
+        for f in log_fields or []:
+            try:
+                v = get_nested_field(msg, f)
+                data[f] = v
+            except Exception as e:
+                self.get_logger().debug(f"generic_callback: failed to read {f} from {topic_name}: {e}")
+
+        if data:
+            event = {
+                'time': datetime.now(tz=timezone.utc),
+                'event_type': f"topic:{topic_name}",
+                'details': data
+            }
+            self.db_mgr.add_event(event)
+
+        # Optional publisher configured for this topic
+        pub_cfg = self.dynamic_publishers.get(topic_name)
+        if pub_cfg:
+            publisher, pub_msg_cls, pub_field = pub_cfg
+            try:
+                val = get_nested_field(msg, pub_field)
+                out_msg = pub_msg_cls()
+                if hasattr(out_msg, 'data'):
+                    out_msg.data = val
+                    publisher.publish(out_msg)
+                else:
+                    # attempt shallow assignment of first writable attribute
+                    for attr in dir(out_msg):
+                        if not attr.startswith('_'):
+                            try:
+                                setattr(out_msg, attr, val)
+                                publisher.publish(out_msg)
+                                break
+                            except Exception:
+                                continue
+            except Exception as e:
+                self.get_logger().debug(f"generic_callback publish failed for {topic_name}: {e}")
+
+    # -------------------------
+    # Logging & DB updates
+    # -------------------------
+    def log_event(self, msg='', details=None):
+        if details is None:
+            details = {}
+        event_time = datetime.now(tz=timezone.utc)
+        event = {'time': event_time, 'event_type': msg, 'details': details}
+        self.db_mgr.add_event(event)
+
+        # publish incidents
+        incidents_msg = Int8()
+        incidents_msg.data = self.incidents
+        self.incidents_publisher.publish(incidents_msg)
+
+        # update DB metric values
+        self.db_mgr.update_distance(self.distance)
+        self.db_mgr.update_incidents(self.incidents)
+        self.db_mgr.update_autonomous_distance(self.autonomous_distance)
+        self.mdbi = float(self.distance) / float(self.incidents) if self.incidents != 0 else 0.0
+        self.db_mgr.update_mdbi(self.mdbi)
+
+    # -------------------------
+    # Heartbeat & metrics publishing
+    # -------------------------
     def publish_heartbeat(self):
-        # Create and publish the heartbeat message
-        heartbeat_msg = Bool()
-        heartbeat_msg.data = True  # Set to True to indicate the node is alive
-        self.heartbeat_publisher.publish(heartbeat_msg)
-        self.get_logger().debug('Heartbeat published')
-
+        hb = Bool()
+        hb.data = True
+        self.heartbeat_publisher.publish(hb)
+        # If speed unchanged, publish zero to indicate stop
         if self.prev_speed != self.speed:
             self.prev_speed = self.speed
         else:
             self.publish_speed(0.0)
 
-    def declare_and_get_parameters(self):
-        # Declare MongoDB host and port as ROS parameters
-        self.declare_parameter('mongodb_host', 'localhost')
-        self.declare_parameter('mongodb_port', 27017)
-        # Retrieve the parameters
-        self.mongo_host = self.get_parameter('mongodb_host').get_parameter_value().string_value
-        self.mongo_port = self.get_parameter('mongodb_port').get_parameter_value().integer_value
-  
-        # Log MongoDB host and port
-        self.get_logger().info(f"MongoDB Host: {self.mongo_host}")
-        self.get_logger().info(f"MongoDB Port: {self.mongo_port}")
+    def publish_distance(self, distance):
+        dmsg = Float32()
+        dmsg.data = float(distance)
+        self.distance_publisher.publish(dmsg)
+        self.db_mgr.update_distance(self.distance)
+        self.db_mgr.update_autonomous_distance(self.autonomous_distance)
+        self.get_logger().debug(f"Distance published: {self.distance}")
 
-        # Declare aoc repos path params
-        self.declare_parameter('aoc_scenario_path', '')
-        self.declare_parameter('aoc_navigation_path', '')
-        # Retrieve the parameters
-        self.aoc_scenario_path = self.get_parameter('aoc_scenario_path').get_parameter_value().string_value
-        self.aoc_navigation_path = self.get_parameter('aoc_navigation_path').get_parameter_value().string_value
+    def publish_speed(self, speed):
+        smsg = Float32()
+        smsg.data = float(speed)
+        self.speed_publisher.publish(smsg)
 
-        # Log aoc_scenario_path and aoc_navigation_path
-        self.get_logger().info(f"AOC Scenario Path: {self.aoc_scenario_path}")
-        self.get_logger().info(f"AOC Navigation Path: {self.aoc_navigation_path}")
-
-
-        self.declare_parameter('min_distance_threshold', 0.2)
-        self.min_distance_threshold = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
-        self.get_logger().info(f"min_distance_threshold: {self.min_distance_threshold}")
-
-        param_defaults = {
-            'gps_topic': '/gps_base/fix',
-            'odometry_topic': '/diff_drive_controller/odom',
-            'battery_status_topic': '/diff_drive_controller/battery_status', 
-            'estop_status_topic': '/diff_drive_controller/estop_status', 
-            'hunter_status_topic': '/hunter_status',  # Change this line
-            'dogtooth_status_topic': '/dogtooth_status',  # Change this line
-            'actioned_by_coordinator_topic': '/topological_navigation/execute_policy_mode/goal'
-        }
-        self.params = {}
-        for param, default in param_defaults.items():
-            self.declare_parameter(param, default)
-            self.params[param] = self.get_parameter(param).get_parameter_value().string_value
-
-        for key, value in self.params.items():
-            self.get_logger().info(f"{key.replace('_', ' ').title()}: {value}")
-
-    def create_subscriptions(self):
-        self.create_subscription(Float32, self.params['battery_status_topic'], self.battery_level_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(Bool, self.params['estop_status_topic'], self.estop_sub_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(NavSatFix, self.params['gps_topic'], self.gps_fix_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(Odometry, self.params['odometry_topic'], self.gps_odom_callback, qos_profile=qos_profile_sensor_data)
-        self.create_subscription(ExecutePolicyModeGoal, self.params['actioned_by_coordinator_topic'], self.coordinator_callback, qos_profile=qos_profile_sensor_data) 
-        # Only subscribe to hunter status if the message is available
-        if HUNTER_MSG_AVAILABLE:
-            self.create_subscription(HunterStatus, self.params['hunter_status_topic'], self.hunter_status_callback, qos_profile=qos_profile_sensor_data)
-        else:
-            self.get_logger().warn("HunterStatus message not available, skipping hunter status subscription.")
-        # Only subscribe to dogtooth status if the message is available
-        if DOGTOOTH_MSG_AVAILABLE:
-            self.create_subscription(DogtoothStatus, self.params['dogtooth_status_topic'], self.dogtooth_status_callback, qos_profile=qos_profile_sensor_data)
-        else:
-            self.get_logger().warn("DogtoothStatus message not available, skipping dogtooth status subscription.")
-
+    # -------------------------
+    # Git info helper (optional)
+    # -------------------------
     def get_git_info(self, repo_path="."):
         try:
-            # Get current commit hash
-            commit_hash = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=repo_path
-            ).decode().strip()
-
-            # Get current commit message
-            commit_message = subprocess.check_output(
-                ["git", "log", "-1", "--pretty=%B"], cwd=repo_path
-            ).decode().strip()
-
-            # Get current commit author
-            commit_author = subprocess.check_output(
-                ["git", "log", "-1", "--pretty=%an"], cwd=repo_path
-            ).decode().strip()
-
-            # Get current commit date
-            commit_date = subprocess.check_output(
-                ["git", "log", "-1", "--pretty=%ct"], cwd=repo_path
-            ).decode().strip()
+            commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_path).decode().strip()
+            commit_message = subprocess.check_output(["git", "log", "-1", "--pretty=%B"], cwd=repo_path).decode().strip()
+            commit_author = subprocess.check_output(["git", "log", "-1", "--pretty=%an"], cwd=repo_path).decode().strip()
+            commit_date = subprocess.check_output(["git", "log", "-1", "--pretty=%ct"], cwd=repo_path).decode().strip()
             commit_date = datetime.fromtimestamp(int(commit_date)).strftime('%Y-%m-%d %H:%M:%S')
-
-            # Get current branch name
-            branch_name = subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path
-            ).decode().strip()
-
-            # Get remote URL
+            branch_name = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path).decode().strip()
             try:
-                remote_url = subprocess.check_output(
-                    ["git", "config", "--get", "remote.origin.url"], cwd=repo_path
-                ).decode().strip()
+                remote_url = subprocess.check_output(["git", "config", "--get", "remote.origin.url"], cwd=repo_path).decode().strip()
             except subprocess.CalledProcessError:
-                remote_url = "No remote found"
-
-            git_info = {
-                "build_version": commit_hash[:7],  # Short hash of the latest commit
-                "commit_message": commit_message,  # Commit message
-                "commit_author": commit_author,  # Commit author
-                "commit_date": commit_date,  # Commit date
-                "branch_name": branch_name,  # Current branch name
-                "remote_url": remote_url  # Remote URL
+                remote_url = "No remote"
+            return {
+                "build_version": commit_hash[:7],
+                "commit_message": commit_message,
+                "commit_author": commit_author,
+                "commit_date": commit_date,
+                "branch_name": branch_name,
+                "remote_url": remote_url
             }
-
-            return git_info
-        except subprocess.CalledProcessError:
+        except Exception:
             return {
                 "build_version": "Invalid repository",
                 "commit_message": "",
@@ -273,256 +471,14 @@ class AutonomyMetricsLogger(Node):
                 "remote_url": "Unknown"
             }
 
-    def log_event(self, msg='', details={}):
-        event_time = datetime.now(tz=timezone.utc)
-        event = {
-            'time': event_time,
-            'event_type': msg,
-            'details': details,
-        }
-        self.db_mgr.add_event(event)
-
-        # Publish the total number of incidents
-        incidents_msg = Int8()
-        incidents_msg.data = self.incidents
-        self.incidents_publisher.publish(incidents_msg)
-
-        # Also update MDBI and other metrics
-        self.db_mgr.update_distance(self.distance)
-        self.db_mgr.update_incidents(self.incidents)
-        self.db_mgr.update_autonomous_distance(self.autonomous_distance)
-
-        self.mdbi = float(self.distance) / float(self.incidents) if self.incidents != 0 else 0.0
-        self.db_mgr.update_mdbi(self.mdbi)
-
-    def battery_level_callback(self, msg):
-        self.details['battery_voltage'] = msg.data
-        battery_msg = Float32()
-        battery_msg.data = msg.data
-        self.battery_publisher.publish(battery_msg)
-        self.get_logger().debug(f"Battery level published: {msg.data}")
-
-    def estop_sub_callback(self, msg):
-        if msg.data != self.details['estop']:
-            self.details['estop'] = msg.data
-            self.get_logger().info(f"Estop status changed to: {self.details['estop']}")
-
-            if self.details['estop']:
-                self.incidents += 1
-                self.get_logger().info(f"Incident count incremented to: {self.incidents}")
-                self.log_event('EMS', self.details)
-
-    def control_mode_callback(self, msg):
-        current_time = datetime.now()
-        
-        if msg.data != self.details['operation_mode']:
-            previous_mode = self.details['operation_mode']
-            self.details['operation_mode'] = msg.data
-            self.get_logger().info(f"operation_mode : {msg.data}")
-
-            # If switching from AUTO to MANUAL, calculate elapsed time in AUTO mode
-            if previous_mode == self.AUTO and self.details['operation_mode'] == self.MAN:
-                if self.autonomous_start_time is not None:
-                    elapsed_autonomous_time = (current_time - self.autonomous_start_time).total_seconds()
-                    self.autonomous_time += elapsed_autonomous_time
-                    self.details['autonomous_time'] = self.autonomous_time
-                    self.get_logger().info(f"Autonomous mode elapsed time: {elapsed_autonomous_time} seconds")
-                    self.autonomous_start_time = None  # Reset the start time
-
-            # If switching to AUTO mode, start timing
-            elif self.details['operation_mode'] == self.AUTO:
-                self.autonomous_start_time = current_time
-                self.get_logger().info(f"Autonomous mode started at: {self.autonomous_start_time}")
-
-            # Log the event
-            if self.details['operation_mode'] == self.MAN:
-                self.incidents += 1
-                self.log_event('Manual_override', self.details)
-            elif self.details['operation_mode'] == self.AUTO:
-                self.log_event('Autonomous', self.details)
-
-    def coordinator_callback(self, msg):
-        edge_id = msg.route.edge_id
-        source = msg.route.source
-        self.tasks_received_from_coordinator += 1
-        self.get_logger().info(f"Task count incremented to: {self.tasks_received_from_coordinator}")
-        coordinator = {'edge_id': edge_id, 'source': source, 'tasks_received_from_coordinator': self.tasks_received_from_coordinator}
-        self.details['coordinator'] = coordinator
-        self.log_event('Coordinator_task', self.details)
-        
-    def hunter_status_callback(self, msg):
-        # Serialize HunterStatus into a dictionary
-        serialized_data = {
-            'header': {
-                'stamp': {
-                    'sec': msg.header.stamp.sec,
-                    'nanosec': msg.header.stamp.nanosec,
-                },
-                'frame_id': msg.header.frame_id
-            },
-            'linear_velocity': msg.linear_velocity,
-            'steering_angle': msg.steering_angle,
-            'vehicle_state': msg.vehicle_state,
-            'control_mode': msg.control_mode,
-            'error_code': msg.error_code,
-            'battery_voltage': msg.battery_voltage,
-            'actuator_states': [
-                {
-                    'motor_id': actuator.motor_id,
-                    'rpm': actuator.rpm,
-                    'current': actuator.current,
-                    'pulse_count': actuator.pulse_count,
-                    'driver_voltage': actuator.driver_voltage,
-                    'driver_temperature': actuator.driver_temperature,
-                    'motor_temperature': actuator.motor_temperature,
-                    'driver_state': actuator.driver_state
-                } for actuator in msg.actuator_states
-            ]
-        }
-        self.details['hunter_status'] = serialized_data
-
-        battery = Float32()
-        battery.data = msg.battery_voltage
-        self.battery_level_callback(battery)
-
-        control_mode = String()
-        if msg.control_mode == 3: #this is manual mode in hunter
-            control_mode.data = self.MAN
-        elif msg.control_mode == 1 or msg.control_mode == 0: #this is auto mode in hunter
-            control_mode.data = self.AUTO
-        self.control_mode_callback(control_mode)
-
-    def dogtooth_status_callback(self, msg):
-        # Serialize HunterStatus into a dictionary
-        serialized_data = {
-            'header': {
-                'stamp': {
-                    'sec': msg.header.stamp.sec,
-                    'nanosec': msg.header.stamp.nanosec,
-                },
-                'frame_id': msg.header.frame_id
-            },
-            'linear_velocity': msg.linear_velocity,
-            'angular_velocity': msg.angular_velocity,
-            'vehicle_state': msg.vehicle_state,
-            'control_mode': msg.control_mode,
-            'error_code': msg.error_code,
-            'battery_voltage': msg.battery_voltage,
-        }
-        self.details['dogtooth_status'] = serialized_data
-
-        battery = Float32()
-        battery.data = msg.battery_voltage
-        self.battery_level_callback(battery)
-
-        control_mode = String()
-        if msg.control_mode == 3: #this is manual mode in hunter
-            control_mode.data = self.MAN
-        elif msg.control_mode == 1 or msg.control_mode == 0: #this is auto mode in hunter
-            control_mode.data = self.AUTO
-        self.control_mode_callback(control_mode)
-
-    def gps_fix_callback(self, msg):
-        gps_data = {
-            'latitude': msg.latitude,
-            'longitude': msg.longitude,
-            'altitude': msg.altitude,
-            'position_covariance': list(msg.position_covariance),
-            'position_covariance_type': msg.position_covariance_type,
-            'status': msg.status.status,
-            'service': msg.status.service
-        }
-
-        self.details['gps_data'] = gps_data
-
-        if not self.first_gps_fix_received:
-            self.first_gps_fix_received = True
-            self.log_event('First_GNSS_msg', self.details)
-
-    def gps_odom_callback(self, msg):
-        position = msg.pose.pose.position
-
-        if self._initialize_pose(position):
-            return
-
-        distance = self._calculate_distance(position)
-
-        if self._is_significant_distance(distance):
-            self._update_distances(distance, position)
-
-    def _initialize_pose(self, position):
-        if self.init_pose:
-            self.init_pose = False
-            self.previous_x = position.x
-            self.previous_y = position.y
-            return True
-        return False
-
-    def _calculate_distance(self, position):
-        dx = position.x - self.previous_x
-        dy = position.y - self.previous_y
-        return math.sqrt(dx**2 + dy**2)
-
-    def _is_significant_distance(self, distance):
-        return distance >= self.min_distance_threshold
-
-    def _update_distances(self, distance, position):
-        current_time = self.get_clock().now()
-
-        # Calculate time difference between the last update and now
-        if hasattr(self, 'previous_time'):
-            time_diff = (current_time - self.previous_time).nanoseconds * 1e-9  # Convert to seconds
-            self.speed = distance / time_diff if time_diff > 0 else 0.0
-        else:
-            self.speed = 0.0
-
-        # Update the previous time
-        self.previous_time = current_time
-
-        # Update the total traveled distance
-        self.distance += distance
-        if self.details['operation_mode'] == self.AUTO:
-            self.autonomous_distance += distance
-        self.previous_x = position.x
-        self.previous_y = position.y
-
-        # Publish the distance and speed
-        self.publish_distance(self.distance)
-        self.publish_speed(self.speed)
-
-    def publish_distance(self, distance):
-        # Publish total traveled distance
-        distance_msg = Float32()
-        distance_msg.data = distance
-        self.distance_publisher.publish(distance_msg)
-
-        self.db_mgr.update_distance(self.distance)
-        self.db_mgr.update_autonomous_distance(self.autonomous_distance)
-
-        # Log the speed and distance
-        self.get_logger().debug(f"Traveled distance: {self.distance} meters")
-
-    def publish_speed(self, speed):
-        # Publish robot speed
-        speed_msg = Float32()
-        speed_msg.data = speed
-        self.speed_publisher.publish(speed_msg)
-
-
-    def _log_distance(self, distance):
-        self.get_logger().debug(f"distance: {distance}")
-
-
-
 def main(args=None):
     rclpy.init(args=args)
-    
-    autonomy_metric_logger = AutonomyMetricsLogger()
-    
-    rclpy.spin(autonomy_metric_logger)
-    autonomy_metric_logger.destroy_node()
-    rclpy.shutdown()
-
+    node = AutonomyMetricsLogger()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
