@@ -2,6 +2,9 @@ git_repos:
   aoc_scenario_path: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario"
 
 topics:
+  # ---------------------------------------------------------
+  # 1. GPS (Working)
+  # ---------------------------------------------------------
   - name: "/gps_base/fix"
     type: "sensor_msgs/msg/NavSatFix"
     log_fields:
@@ -14,6 +17,9 @@ topics:
       type: "std_msgs/msg/Float32"
       field: "altitude"
 
+  # ---------------------------------------------------------
+  # 2. Odometry (Working)
+  # ---------------------------------------------------------
   - name: "/gophar_vehicle_controller/odometry"
     type: "nav_msgs/msg/Odometry"
     role: "odometry"
@@ -24,6 +30,9 @@ topics:
     publish:
       enable: false
 
+  # ---------------------------------------------------------
+  # 3. System Status (Working)
+  # ---------------------------------------------------------
   - name: "/gophar/system_status"
     type: "dynium_gophar_interfaces/msg/SystemStatus"
     log_fields:
@@ -32,10 +41,24 @@ topics:
       - "ignition_switch"
       - "charger_interlock"
       - "battery_percentage"
-
     publish:
       enable: true
       topic: "mdbi_logger/battery_level"
       type: "std_msgs/msg/Float32"
       field: "battery_percentage"
 
+  # ---------------------------------------------------------
+  # 4. [MISSING] Control Mode (REQUIRED FOR MDBI)
+  # ---------------------------------------------------------
+  # You must add this so the logger knows when to count 'autonomous' distance.
+  # Adjust 'name' and 'mode_mapping' to match your robot.
+  - name: "/gophar/operation_mode"   # <--- CHECK THIS TOPIC NAME
+    type: "std_msgs/msg/String"      # <--- CHECK THIS TYPE (String, Int8, etc)
+    role: "control_mode"
+    mode_field: "data"               # The field inside the message holding the mode
+    # Map the values your robot sends to 'Autonomous' or 'Manual'
+    mode_mapping:
+      "AUTO": "Autonomous"
+      "MANUAL": "Manual"
+      "1": "Autonomous"
+      "0": "Manual"

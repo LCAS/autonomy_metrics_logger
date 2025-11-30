@@ -23,7 +23,7 @@ def generate_launch_description():
             'config_yaml': LaunchConfiguration('config_yaml'),
             # optional override
             'mongodb_host': 'localhost',
-            'mongodb_port': 27017,
+            'mongodb_port': 27018,
         }]
     )
 
