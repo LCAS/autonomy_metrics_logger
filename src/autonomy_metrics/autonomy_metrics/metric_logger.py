@@ -82,6 +82,10 @@ class AutonomyMetricsLogger(Node):
         self.declare_parameter('config_yaml', '')
         self.declare_parameter('mongodb_host', 'localhost')
         self.declare_parameter('mongodb_port', 27017)
+        # REMOTE PARAMETERS
+        self.declare_parameter('remote_mongodb_host', '')
+        self.declare_parameter('remote_mongodb_port', 27017)
+        self.declare_parameter('enable_remote_logging', False) # Safety switch        
         self.declare_parameter('min_distance_threshold', 0.2)
         # Timeout to consider robot stopped if no distance update occurs
         self.declare_parameter('stop_timeout', 2.0) 
@@ -90,13 +94,28 @@ class AutonomyMetricsLogger(Node):
         self.config_path = self.get_parameter('config_yaml').get_parameter_value().string_value
         self.mongo_host = self.get_parameter('mongodb_host').get_parameter_value().string_value
         self.mongo_port = self.get_parameter('mongodb_port').get_parameter_value().integer_value
+        self.remote_mongo_host = self.get_parameter('remote_mongodb_host').get_parameter_value().string_value
+        self.remote_mongo_port = self.get_parameter('remote_mongodb_port').get_parameter_value().integer_value
+        self.enable_remote_logging = self.get_parameter('enable_remote_logging').get_parameter_value().bool_value
         self.min_distance_threshold = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.stop_timeout = self.get_parameter('stop_timeout').get_parameter_value().double_value
 
         self.get_logger().info(f"Config path: {self.config_path}")
         self.get_logger().info(f"Mongo host: {self.mongo_host}, port: {self.mongo_port}")
 
-        self.db_mgr = DBMgr(host=self.mongo_host, port=self.mongo_port)
+        # Database managers
+        # Local (Primary) DB Manager
+        self.db_mgr_local = DBMgr(host=self.mongo_host, port=self.mongo_port)
+        
+        # 🆕 Remote (Secondary) DB Manager
+        self.db_mgr_remote = None
+        if self.enable_remote_logging and self.remote_mongo_host:
+            self.get_logger().info(f"Initializing Remote DB at {self.remote_mongo_host}:{self.remote_mongo_port}")
+            try:
+                self.db_mgr_remote = DBMgr(host=self.remote_mongo_host, port=self.remote_mongo_port)
+            except Exception as e:
+                self.get_logger().error(f"Failed to initialize remote DB manager: {e}")
+                self.enable_remote_logging = False
 
         # Internal metrics state
         self.mdbi = 0.0
@@ -150,8 +169,11 @@ class AutonomyMetricsLogger(Node):
             except Exception:
                 pass
 
-        self.db_mgr.init_session(env_variables, git_repos)
-
+        # Update init_session call to use local manager (or both if needed)
+        self.db_mgr_local.init_session(env_variables, git_repos)
+        if self.db_mgr_remote:
+            self.db_mgr_remote.init_session(env_variables, git_repos)
+            
     def load_and_setup_config(self):
         if not self.config_path:
             self.get_logger().error("No 'config_yaml' parameter provided.")
@@ -328,17 +350,32 @@ class AutonomyMetricsLogger(Node):
         data = {}
         for f in log_fields:
             try:
+                # 1. Extract data
                 data[f] = get_nested_field(msg, f)
             except Exception:
+                # Silently fail on field extraction error
                 pass
         
         if data:
-            self.db_mgr.add_event({
+            # 2. Construct the event document
+            event = {
                 'time': datetime.now(tz=timezone.utc),
                 'event_type': f"topic:{topic_name}",
                 'details': data
-            })
-        
+            }
+            
+            # 3. Log to LOCAL DB (always required)
+            self.db_mgr_local.add_event(event)
+
+            # 4. Log to REMOTE DB (if enabled and initialized)
+            if self.db_mgr_remote:
+                try:
+                    self.db_mgr_remote.add_event(event)
+                except Exception as e:
+                    # Log error, but continue node operation
+                    self.get_logger().warn(f"Remote DB error adding generic event for {topic_name}: {e}")
+
+        # 5. Handle dynamic publishing (no changes needed here)
         self.handle_dynamic_publish(topic_name, msg)
 
     def handle_dynamic_publish(self, topic_name, msg):
@@ -384,32 +421,55 @@ class AutonomyMetricsLogger(Node):
         # If we are moving at constant velocity, we just keep the last self.speed
         # We do NOT force it to zero just because it equals prev_speed.
 
-    def log_event(self, msg, details):
-        self.db_mgr.add_event({
-            'time': datetime.now(tz=timezone.utc),
-            'event_type': msg, 
-            'details': details
-        })
-        
-        i_msg = Int8()
-        i_msg.data = self.incidents
-        self.incidents_publisher.publish(i_msg)
+    def update_db_metrics(self):
+        # Calculate MDBI once
+        mdbi_val = float(self.distance) / float(self.incidents) if self.incidents != 0 else self.distance
 
-        self.db_mgr.update_distance(self.distance)
-        self.db_mgr.update_incidents(self.incidents)
-        self.db_mgr.update_autonomous_distance(self.autonomous_distance)
+        # List of managers to update (local is always there)
+        db_managers = [self.db_mgr_local]
+        if self.db_mgr_remote:
+            db_managers.append(self.db_mgr_remote)
+
+        for dbm in db_managers:
+            try:
+                dbm.update_distance(self.distance)
+                dbm.update_incidents(self.incidents)
+                dbm.update_autonomous_distance(self.autonomous_distance)
+                dbm.update_mdbi(mdbi_val)
+            except Exception as e:
+                self.get_logger().warn(f"DB update failed for manager: {e}")
+
+    def log_event(self, msg='', details=None):
+        if details is None:
+            details = {}
+        event_time = datetime.now(tz=timezone.utc)
+        event = {'time': event_time, 'event_type': msg, 'details': details}
         
-        if self.incidents > 0:
-            self.mdbi = self.distance / self.incidents
-        else:
-            self.mdbi = self.distance # Or 0.0, depends on definition. Usually total dist if 0 incidents.
-            
-        self.db_mgr.update_mdbi(self.mdbi)
+        # 1. Log to LOCAL DB
+        self.db_mgr_local.add_event(event)
+
+        # 2. Log to REMOTE DB (Safely check if manager exists)
+        if self.db_mgr_remote:
+            try:
+                self.db_mgr_remote.add_event(event)
+            except Exception as e:
+                # Log error but don't crash the nodedef publish_distance
+                self.get_logger().warn(f"Remote DB error during event logging: {e}") 
+
+        # publish incidents (no change)
+        incidents_msg = Int8()
+        incidents_msg.data = self.incidents
+        self.incidents_publisher.publish(incidents_msg)
+
+        # Update metric values in BOTH DBs
+        self.update_db_metrics()
 
     def publish_distance(self, dist):
         msg = Float32()
         msg.data = float(dist)
         self.distance_publisher.publish(msg)
+        self.update_db_metrics()
+        self.get_logger().debug(f"Distance published: {self.distance}")
 
     def publish_speed(self, speed):
         msg = Float32()
