@@ -79,6 +79,7 @@ def import_msg_type(type_str: str):
     except Exception as e:
         raise ImportError(f"Failed to import message type '{type_str}': {e}")
 
+
 def get_nested_field(obj, path: str):
     try:
         cur = obj
@@ -93,6 +94,7 @@ def get_nested_field(obj, path: str):
     except Exception as e:
         raise AttributeError(f"Failed to get '{path}': {e}")
 
+
 class AutonomyMetricsLogger(Node):
     def __init__(self):
         super().__init__('mdbi_logger_dynamic')
@@ -105,9 +107,9 @@ class AutonomyMetricsLogger(Node):
         self.declare_parameter('mongodb_port', 27018)
         self.declare_parameter('remote_mongodb_host', '')
         self.declare_parameter('remote_mongodb_port', 27017)
-        self.declare_parameter('enable_remote_logging', False)    
+        self.declare_parameter('enable_remote_logging', False)
         self.declare_parameter('min_distance_threshold', 0.2)
-        self.declare_parameter('stop_timeout', 2.0) 
+        self.declare_parameter('stop_timeout', 2.0)
         self.declare_parameter('mode_observer_cmd_timeout', 1.0)         # seconds
         self.declare_parameter('mode_observer_speed_threshold', 0.01)    # m/s
         # Collision detection tuning
@@ -132,6 +134,10 @@ class AutonomyMetricsLogger(Node):
         self.stop_timeout = self.get_parameter('stop_timeout').get_parameter_value().double_value
 
         self.get_logger().info(f"Config path: {self.config_path}")
+        self.get_logger().info(
+            f"Collision params: nav_thr={self.collision_nav_threshold}, "
+            f"zero_thr={self.collision_zero_threshold}, time_window={self.collision_time_window}"
+        )
 
         # DB Managers
         self.db_mgr_local = DBMgr(host=self.mongo_host, port=self.mongo_port)
@@ -139,6 +145,9 @@ class AutonomyMetricsLogger(Node):
         if self.enable_remote_logging and self.remote_mongo_host:
             try:
                 self.db_mgr_remote = DBMgr(host=self.remote_mongo_host, port=self.remote_mongo_port)
+                self.get_logger().info(
+                    f"Remote DB logging enabled: {self.remote_mongo_host}:{self.remote_mongo_port}"
+                )
             except Exception as e:
                 self.get_logger().error(f"Failed to initialize remote DB manager: {e}")
 
@@ -151,8 +160,8 @@ class AutonomyMetricsLogger(Node):
         self.autonomous_start_time = None
         self.AUTO = 'Autonomous'
         self.MAN = 'Manual'
-        self.details = {'estop': False, 'operation_mode': self.AUTO} 
-        
+        self.details = {'estop': False, 'operation_mode': self.AUTO}
+
         # Mode observation (velocity-based fallback when no "operation_mode" topic available)
         self.has_explicit_control_mode = False
         self.mode_observer_enabled = False
@@ -175,13 +184,13 @@ class AutonomyMetricsLogger(Node):
         # Stores the latest extracted values from all topics
         # ----------------------------------------------------
         self.system_snapshot = {}
-        
+
         # Snapshot of latest values per field for change detection
         self.prev_field_values = {}
 
         # Current battery level (updated from any topic with 'battery_field')
-        self.current_battery = None       
-        
+        self.current_battery = None
+
         # Odometry / Speed state
         self.previous_x = None
         self.previous_y = None
@@ -220,46 +229,64 @@ class AutonomyMetricsLogger(Node):
             'application': os.getenv('APPLICATION', 'UNDEFINED'),
             'scenario_name': os.getenv('SCENARIO_NAME', 'UNDEFINED'),
         }
-        
+
+        self.get_logger().info(
+            f"Session env: robot={env_variables['robot_name']}, "
+            f"farm={env_variables['farm_name']}, field={env_variables['field_name']}, "
+            f"app={env_variables['application']}, scenario={env_variables['scenario_name']}"
+        )
+
         git_repos = []
         if self.config:
             try:
                 git_cfg = self.config.get('git_repos', {})
                 for label, p in git_cfg.items():
                     repo_path = os.path.join('/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario', p)
-                    git_repos.append({label: self.get_git_info(repo_path)})
-            except Exception:
-                pass
+                    repo_info = self.get_git_info(repo_path)
+                    git_repos.append({label: repo_info})
+                    self.get_logger().debug(
+                        f"Git repo [{label}]: path={repo_info['path']}, "
+                        f"branch={repo_info['branch']}, short_commit={repo_info['short_commit']}"
+                    )
+            except Exception as e:
+                self.get_logger().warn(f"Failed to collect git info: {e}")
 
         self.db_mgr_local.init_session(env_variables, git_repos)
         if self.db_mgr_remote:
             self.db_mgr_remote.init_session(env_variables, git_repos)
-            
+
     def load_and_setup_config(self):
         if not self.config_path:
             self.config = {}
+            self.get_logger().warn("No config_yaml path provided; running with empty config.")
             return
 
         try:
             with open(self.config_path, 'r') as f:
                 self.config = yaml.safe_load(f) or {}
+            self.get_logger().info(
+                f"Loaded metrics config from YAML. topics={len(self.config.get('topics', []))}"
+            )
         except Exception as e:
             self.get_logger().error(f"Failed to load YAML: {e}")
             self.config = {}
             return
 
         topics = self.config.get('topics', [])
-        
+
         # Detect if an explicit control mode topic is configured
         self.has_explicit_control_mode = any(
             (t.get('role', '').lower() == 'control_mode') for t in topics
         )
-        
+        self.get_logger().info(f"Explicit control_mode topic present: {self.has_explicit_control_mode}")
+
         for item in topics:
             name = item.get('name')
             type_str = item.get('type')
-            
-            if not name or not type_str: continue
+
+            if not name or not type_str:
+                self.get_logger().warn(f"Skipping invalid topic config: {item}")
+                continue
 
             self.topic_cfg_map[name] = item
 
@@ -268,6 +295,7 @@ class AutonomyMetricsLogger(Node):
             if role == 'mode_observer':
                 self.mode_observer_enabled = True
                 self.mode_observer_topic_name = name
+                self.get_logger().info(f"Mode observer configured on topic: {name}")
 
             # Dynamic Publisher Setup
             pub_cfg = item.get('publish', {})
@@ -276,7 +304,10 @@ class AutonomyMetricsLogger(Node):
                     pub_msg_cls = import_msg_type(pub_cfg['type'])
                     pub = self.create_publisher(pub_msg_cls, pub_cfg['topic'], 10)
                     self.dynamic_publishers[name] = (pub, pub_msg_cls, pub_cfg.get('field'))
-                    self.get_logger().info(f"Dynamic Pub: {pub_cfg['topic']} -> {name}")
+                    self.get_logger().info(
+                        f"Dynamic publisher created: {pub_cfg['topic']} "
+                        f"(type={pub_cfg['type']}) from topic={name}"
+                    )
                 except Exception as e:
                     self.get_logger().error(f"Pub creation failed for {name}: {e}")
                     self.dynamic_publishers[name] = None
@@ -303,11 +334,10 @@ class AutonomyMetricsLogger(Node):
                     cb = lambda msg, n=name, l=lf: self.generic_callback(n, msg, l)
 
                 self.create_subscription(msg_cls, name, cb, qos_profile_sensor_data)
-                self.get_logger().info(f"Subscribed to {name} ({role})")
+                self.get_logger().info(f"Subscribed to {name} (role={role})")
 
             except Exception as e:
                 self.get_logger().error(f"Sub creation failed for {name}: {e}")
-
 
     def get_metrics_snapshot(self):
         """
@@ -339,12 +369,16 @@ class AutonomyMetricsLogger(Node):
         if count_incident:
             self.incidents += 1
 
+        self.get_logger().info(
+            f"[Intervention] type={event_type}, mode={current_mode}, "
+            f"counted={count_incident}, total_incidents={self.incidents}"
+        )
+
         base_details = dict(self.details)  # estop, operation_mode, etc.
         base_details.update(extra)
         base_details["system_snapshot"] = self.system_snapshot.copy()
 
         self.log_event(event_type, base_details)
-
 
     def handle_intervention_triggers(self, topic_name: str, data: dict, cfg: dict):
         """
@@ -356,6 +390,9 @@ class AutonomyMetricsLogger(Node):
         msg_trig = cfg.get("intervention_on_message", {})
         if msg_trig.get("enable", False):
             evt_type = msg_trig.get("event_type", f"{topic_name}_activity")
+            self.get_logger().info(
+                f"[Trigger] intervention_on_message on topic '{topic_name}' -> event '{evt_type}'"
+            )
             self.trigger_intervention(evt_type, extra={"topic": topic_name})
 
         # 2) Trigger on change of specific fields
@@ -387,6 +424,10 @@ class AutonomyMetricsLogger(Node):
                 "new_value": new,
                 "prev_value": prev,
             }
+            self.get_logger().info(
+                f"[Trigger] field_change on '{topic_name}.{field_name}' "
+                f"from {prev} -> {new} -> event '{evt_type}'"
+            )
             self.trigger_intervention(evt_type, extra=extra)
 
     # -------------------------
@@ -412,6 +453,9 @@ class AutonomyMetricsLogger(Node):
             self.previous_y = pos.y
             self.previous_time = current_time
             self.last_odom_update_time = current_time
+            self.get_logger().info(
+                f"[Odom] Initial pose set x={pos.x:.3f}, y={pos.y:.3f}"
+            )
             return
 
         dx = pos.x - self.previous_x
@@ -419,6 +463,7 @@ class AutonomyMetricsLogger(Node):
         dist = math.sqrt(dx * dx + dy * dy)
 
         if dist < self.min_distance_threshold:
+            # Too small to count as movement
             return
 
         if not hasattr(self, 'previous_time'):
@@ -448,10 +493,15 @@ class AutonomyMetricsLogger(Node):
             'speed': self.speed,
         }
 
+        self.get_logger().debug(
+            f"[Odom] step_dist={dist:.3f} m, total_dist={self.distance:.3f} m, "
+            f"auto_dist={self.autonomous_distance:.3f} m, speed={self.speed:.3f} m/s, "
+            f"mode={self.details.get('operation_mode')}"
+        )
+
         self.publish_distance(self.distance)
         self.publish_speed(self.speed)
         self.handle_dynamic_publish(topic_name, msg)
-
 
     def control_mode_role_callback(self, topic_name, msg):
         cfg = self.topic_cfg_map.get(topic_name, {})
@@ -475,7 +525,9 @@ class AutonomyMetricsLogger(Node):
         if new_mode != self.details.get('operation_mode'):
             prev_mode = self.details.get('operation_mode')
             self.details['operation_mode'] = new_mode
-            self.get_logger().info(f"Mode changed: {prev_mode} -> {new_mode}")
+            self.get_logger().info(
+                f"Mode changed (explicit): {prev_mode} -> {new_mode} (raw={val})"
+            )
 
             if prev_mode == self.AUTO and new_mode == self.MAN:
                 if self.autonomous_start_time:
@@ -494,7 +546,6 @@ class AutonomyMetricsLogger(Node):
                     'system_snapshot': self.system_snapshot.copy()
                 })
 
-
     def estop_role_callback(self, topic_name, msg):
         cfg = self.topic_cfg_map.get(topic_name, {})
         field = cfg.get('field', 'data')
@@ -507,11 +558,10 @@ class AutonomyMetricsLogger(Node):
 
         if v != self.details.get('estop', False):
             self.details['estop'] = v
-            self.get_logger().info(f"E-Stop: {v}")
+            self.get_logger().info(f"E-Stop state changed: {v}")
             if v:
                 # E-stop counts as intervention
                 self.trigger_intervention('EMS')
-
 
     def generic_callback(self, topic_name, msg, log_fields):
         cfg = self.topic_cfg_map.get(topic_name, {})
@@ -523,12 +573,15 @@ class AutonomyMetricsLogger(Node):
             self.system_snapshot['mode_observer'] = {
                 'topic': topic_name
             }
+            self.get_logger().debug(
+                f"[ModeObserver] Received command on {topic_name}, "
+                f"marking recent autonomous command."
+            )
 
         data = {}
         log_all = bool(cfg.get("log_all_fields", False))
 
         if log_all:
-            # NEW: capture the entire message into the snapshot
             try:
                 data = ros_msg_to_dict(msg)
             except Exception as e:
@@ -537,7 +590,6 @@ class AutonomyMetricsLogger(Node):
                 )
                 data = {}
         else:
-            # Original behaviour: only selected log_fields
             for f in log_fields:
                 try:
                     data[f] = get_nested_field(msg, f)
@@ -551,11 +603,13 @@ class AutonomyMetricsLogger(Node):
             # If this topic carries battery info, update the battery state
             battery_field = cfg.get("battery_field")
             if battery_field and battery_field in data:
+                old_batt = self.current_battery
                 self.current_battery = data[battery_field]
-
-        # IMPORTANT:
-        # No per-message DB logging anymore.
-        # We only call log_event(...) on interventions / collisions / mode changes.
+                if old_batt is None or abs(self.current_battery - old_batt) >= 1.0:
+                    self.get_logger().info(
+                        f"[Battery] {topic_name}.{battery_field} updated: "
+                        f"{old_batt} -> {self.current_battery}"
+                    )
 
         # Apply YAML-configured intervention triggers (message & field-change)
         self.handle_intervention_triggers(topic_name, data, cfg)
@@ -563,22 +617,17 @@ class AutonomyMetricsLogger(Node):
         # Dynamic republishing if configured
         self.handle_dynamic_publish(topic_name, msg)
 
-
     def handle_dynamic_publish(self, topic_name, msg):
         pub_cfg = self.dynamic_publishers.get(topic_name)
-        if not pub_cfg: return
+        if not pub_cfg:
+            return
         publisher, pub_msg_cls, pub_field = pub_cfg
-        
+
         try:
             val = get_nested_field(msg, pub_field) if pub_field else msg
-            
+
             out_msg = pub_msg_cls()
             if hasattr(out_msg, 'data'):
-                # ---------------------------------------------------------
-                # 4. FIX: Robust Type Casting
-                # If target is Float32 but val is int, simple assignment works
-                # but explicit cast is safer.
-                # ---------------------------------------------------------
                 if 'Float' in pub_msg_cls.__name__:
                     out_msg.data = float(val)
                 elif 'Int' in pub_msg_cls.__name__:
@@ -594,17 +643,17 @@ class AutonomyMetricsLogger(Node):
                         try:
                             setattr(out_msg, attr, val)
                             break
-                        except: continue
-            
-            publisher.publish(out_msg)
-        
-        except Exception as e:
-            # ---------------------------------------------------------
-            # 5. FIX: Log Errors
-            # Don't fail silently. Tell user why it failed.
-            # ---------------------------------------------------------
-            self.get_logger().error(f"Dynamic publish failed for {topic_name}: {e}")
+                        except Exception:
+                            continue
 
+            publisher.publish(out_msg)
+            self.get_logger().debug(
+                f"[DynamicPublish] topic={topic_name} -> republished "
+                f"value={val} ({pub_msg_cls.__name__})"
+            )
+
+        except Exception as e:
+            self.get_logger().error(f"Dynamic publish failed for {topic_name}: {e}")
 
     def update_observed_mode_from_odom(self, is_moving: bool, now=None):
         """
@@ -629,6 +678,11 @@ class AutonomyMetricsLogger(Node):
         if self.last_auto_cmd_time is not None:
             dt = (now - self.last_auto_cmd_time).nanoseconds * 1e-9
             auto_cmd_recent = dt <= self.mode_observer_cmd_timeout
+
+        self.get_logger().debug(
+            f"[ModeObserver] is_moving={is_moving}, auto_cmd_recent={auto_cmd_recent}, "
+            f"prev_mode={prev_mode}"
+        )
 
         if not is_moving:
             # Don't flip modes just because we stopped; keep previous
@@ -658,14 +712,12 @@ class AutonomyMetricsLogger(Node):
                 "mode_source": "observed",
                 "observer_topic": self.mode_observer_topic_name,
             }
-            # Uses the same helper we defined earlier
             self.trigger_intervention("Manual_override_observed", extra=extra, force_count=True)
 
         elif prev_mode != self.AUTO and new_mode == self.AUTO:
             self.autonomous_start_time = current_time
 
         self.details['operation_mode'] = new_mode
-
 
     def collision_nav_callback(self, topic_name, msg):
         """
@@ -680,8 +732,12 @@ class AutonomyMetricsLogger(Node):
             'linear_y': msg.linear.y,
             'angular_z': msg.angular.z,
         }
-        # IMPORTANT: do NOT call check_collision_condition here
 
+        self.get_logger().debug(
+            f"[Collision] NAV cmd received: vx={msg.linear.x:.3f}, vy={msg.linear.y:.3f}, "
+            f"wz={msg.angular.z:.3f}"
+        )
+        # IMPORTANT: do NOT call check_collision_condition here
 
     def collision_output_callback(self, topic_name, msg):
         """
@@ -703,9 +759,13 @@ class AutonomyMetricsLogger(Node):
             'angular_z': msg.angular.z,
         }
 
+        self.get_logger().debug(
+            f"[Collision] COLLISION cmd received: vx={msg.linear.x:.3f}, vy={msg.linear.y:.3f}, "
+            f"wz={msg.angular.z:.3f}"
+        )
+
         # Check for falling edge-based collision
         self.check_collision_condition(now, coll_vx)
-
 
     def check_collision_condition(self, now, coll_vx_now: float):
         """
@@ -726,7 +786,9 @@ class AutonomyMetricsLogger(Node):
         """
         # Need a nav command to interpret the collision behaviour
         if self.last_nav_cmd is None or self.last_nav_time is None:
-            # Still update state, but cannot decide yet
+            self.get_logger().debug(
+                "[Collision] No NAV cmd yet; cannot evaluate collision condition."
+            )
             collision_has_velocity_now = abs(coll_vx_now) > self.collision_zero_threshold
             self.collision_prev_has_velocity = collision_has_velocity_now
             return
@@ -734,6 +796,10 @@ class AutonomyMetricsLogger(Node):
         # Check nav recency
         dt_nav = (now - self.last_nav_time).nanoseconds * 1e-9
         if dt_nav > self.collision_time_window:
+            self.get_logger().debug(
+                f"[Collision] NAV cmd too old ({dt_nav:.3f}s > {self.collision_time_window}s); "
+                "skipping collision evaluation."
+            )
             collision_has_velocity_now = abs(coll_vx_now) > self.collision_zero_threshold
             self.collision_prev_has_velocity = collision_has_velocity_now
             return
@@ -742,6 +808,10 @@ class AutonomyMetricsLogger(Node):
 
         # Does nav actually request motion?
         if nav_vx <= self.collision_nav_threshold:
+            self.get_logger().debug(
+                f"[Collision] NAV vx={nav_vx:.3f} <= nav_threshold={self.collision_nav_threshold}; "
+                "no forward motion requested."
+            )
             collision_has_velocity_now = abs(coll_vx_now) > self.collision_zero_threshold
             self.collision_prev_has_velocity = collision_has_velocity_now
             return
@@ -749,15 +819,24 @@ class AutonomyMetricsLogger(Node):
         # Edge detection on /cmd_vel/collision
         collision_has_velocity_now = abs(coll_vx_now) > self.collision_zero_threshold
 
+        self.get_logger().debug(
+            f"[Collision] prev_has_vel={self.collision_prev_has_velocity}, "
+            f"now_has_vel={collision_has_velocity_now}, coll_vx_now={coll_vx_now:.3f}, "
+            f"nav_vx={nav_vx:.3f}"
+        )
+
         # Falling edge: had velocity before, now ~zero
         if self.collision_prev_has_velocity and not collision_has_velocity_now:
             # This is one collision incident
             self.collision_incidents += 1
+            self.get_logger().info(
+                f"[Collision] Detected collision incident #{self.collision_incidents} "
+                f"(nav_vx={nav_vx:.3f}, coll_vx_now={coll_vx_now:.3f})"
+            )
             self.log_collision_event()
 
         # Update for next call
         self.collision_prev_has_velocity = collision_has_velocity_now
-
 
     # -------------------------
     # Timer & Logging
@@ -769,8 +848,12 @@ class AutonomyMetricsLogger(Node):
 
         now = self.get_clock().now()
         time_since_move = (now - self.last_odom_update_time).nanoseconds * 1e-9
-        
+
         if time_since_move > self.stop_timeout and self.speed > 0.0:
+            self.get_logger().info(
+                f"[Timer] Robot has not moved for {time_since_move:.2f}s; "
+                "forcing speed to 0.0"
+            )
             self.speed = 0.0
             self.publish_speed(0.0)
 
@@ -781,6 +864,11 @@ class AutonomyMetricsLogger(Node):
         else:
             # No incidents → use autonomous distance as-is (no division)
             mdbi_val = float(self.autonomous_distance)
+
+        self.get_logger().debug(
+            f"[DB] metrics update: dist={self.distance:.3f}, auto_dist={self.autonomous_distance:.3f}, "
+            f"incidents={self.incidents}, collisions={self.collision_incidents}, mdbi={mdbi_val:.3f}"
+        )
 
         db_managers = [self.db_mgr_local]
         if self.db_mgr_remote:
@@ -796,7 +884,6 @@ class AutonomyMetricsLogger(Node):
             except Exception as e:
                 self.get_logger().warn(f"DB update failed: {e}")
 
-
     def log_event(self, msg='', details=None):
         if details is None:
             details = {}
@@ -810,19 +897,23 @@ class AutonomyMetricsLogger(Node):
         event_time = datetime.now(tz=timezone.utc)
         event = {'time': event_time, 'event_type': msg, 'details': details}
 
+        self.get_logger().info(
+            f"[Event] type={msg}, time={event_time.isoformat()}, "
+            f"incidents={self.incidents}, collisions={self.collision_incidents}"
+        )
+
         self.db_mgr_local.add_event(event)
         if self.db_mgr_remote:
             try:
                 self.db_mgr_remote.add_event(event)
-            except Exception:
-                pass
+            except Exception as e:
+                self.get_logger().warn(f"Remote DB event log failed: {e}")
 
         incidents_msg = Int32()
         incidents_msg.data = self.incidents
         self.incidents_publisher.publish(incidents_msg)
 
         self.update_db_metrics()
-
 
     def log_collision_event(self):
         """
@@ -858,6 +949,11 @@ class AutonomyMetricsLogger(Node):
             "system_snapshot": self.system_snapshot.copy(),
         }
 
+        self.get_logger().info(
+            f"[Collision] Logging collision event #{self.collision_incidents} "
+            f"(total_incidents={details['total_incidents']})"
+        )
+
         # This will attach metrics (distance, speed, battery, etc.) and write to DB
         self.log_event("Collision", details)
 
@@ -865,18 +961,19 @@ class AutonomyMetricsLogger(Node):
         msg = Int32()
         msg.data = int(self.collision_incidents)
         self.collision_incidents_publisher.publish(msg)
-  
 
     def publish_distance(self, dist):
         msg = Float32()
         msg.data = float(dist)
         self.distance_publisher.publish(msg)
+        self.get_logger().debug(f"[Publish] distance={dist:.3f}")
         self.update_db_metrics()
 
     def publish_speed(self, speed):
         msg = Float32()
         msg.data = float(speed)
         self.speed_publisher.publish(msg)
+        self.get_logger().debug(f"[Publish] speed={speed:.3f}")
 
     def get_git_info(self, repo_path):
         """
@@ -954,9 +1051,7 @@ class AutonomyMetricsLogger(Node):
 
             # NEW: Last commit message (full body or just subject)
             try:
-                # Subject only:
                 info["commit_message"] = git(["log", "-1", "--pretty=%s"])
-                # If you prefer full body, use: "--pretty=%B"
             except Exception:
                 info["commit_message"] = None
 
@@ -995,10 +1090,16 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
+        node.get_logger().info("Shutting down AutonomyMetricsLogger (KeyboardInterrupt).")
         pass
     finally:
+        node.get_logger().info(
+            f"Final stats: distance={node.distance:.3f}, auto_distance={node.autonomous_distance:.3f}, "
+            f"incidents={node.incidents}, collisions={node.collision_incidents}"
+        )
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
