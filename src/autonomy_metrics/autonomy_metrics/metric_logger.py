@@ -21,18 +21,8 @@ from rclpy.time import Time
 # Keep a few explicit imports used by default publishers (std msgs)
 from std_msgs.msg import Bool, Float32, Int8, String
 
-# Optional: existing DB manager
-try:
-    from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
-except ImportError:
-    class DBMgr:
-        def __init__(self, host, port): print(f"DB Mock connected to {host}:{port}")
-        def init_session(self, env, git): print("DB Session Init")
-        def add_event(self, evt): pass
-        def update_distance(self, d): pass
-        def update_incidents(self, i): pass
-        def update_autonomous_distance(self, d): pass
-        def update_mdbi(self, m): pass
+from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
+
 
 def import_msg_type(type_str: str):
     """Dynamically imports message types based on string."""
@@ -72,9 +62,9 @@ class AutonomyMetricsLogger(Node):
         self.get_logger().info("Starting YAML-driven AutonomyMetricsLogger")
 
         # Parameters
-        self.declare_parameter('config_yaml', '')
+        self.declare_parameter('config_yaml', '/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/autonomy_metrics_logger/src/autonomy_metrics/config/metrics_full.yaml')
         self.declare_parameter('mongodb_host', 'localhost')
-        self.declare_parameter('mongodb_port', 27017)
+        self.declare_parameter('mongodb_port', 27018)
         self.declare_parameter('remote_mongodb_host', '')
         self.declare_parameter('remote_mongodb_port', 27017)
         self.declare_parameter('enable_remote_logging', False)    
@@ -110,14 +100,20 @@ class AutonomyMetricsLogger(Node):
         self.autonomous_start_time = None
         self.AUTO = 'Autonomous'
         self.MAN = 'Manual'
-        self.details = {'estop': False, 'operation_mode': self.MAN}
+        self.details = {'estop': False, 'operation_mode': self.MAN} 
         
         # ----------------------------------------------------
         # 1. NEW: Global Snapshot Storage
         # Stores the latest extracted values from all topics
         # ----------------------------------------------------
         self.system_snapshot = {}
+        
+        # Snapshot of latest values per field for change detection
+        self.prev_field_values = {}
 
+        # Current battery level (updated from any topic with 'battery_field')
+        self.current_battery = None       
+        
         # Odometry / Speed state
         self.previous_x = None
         self.previous_y = None
@@ -134,9 +130,7 @@ class AutonomyMetricsLogger(Node):
         self.distance_publisher = self.create_publisher(Float32, 'mdbi_logger/total_traveled_distance', 10)
         self.incidents_publisher = self.create_publisher(Int8, 'mdbi_logger/total_incidents', 10)
         self.speed_publisher = self.create_publisher(Float32, 'mdbi_logger/robot_speed', 10)
-        
-        # NOTE: self.battery_publisher removed here to avoid conflict with YAML dynamic publisher
-        
+                
         self.heartbeat_timer = self.create_timer(1.0, self.timer_callback)
 
         self.load_and_setup_config()
@@ -220,6 +214,80 @@ class AutonomyMetricsLogger(Node):
             except Exception as e:
                 self.get_logger().error(f"Sub creation failed for {name}: {e}")
 
+    def get_metrics_snapshot(self):
+        """
+        Returns a lightweight metrics summary to attach to every event.
+        """
+        metrics = {
+            "distance": self.distance,
+            "autonomous_distance": self.autonomous_distance,
+            "speed": self.speed,
+        }
+        if self.current_battery is not None:
+            metrics["battery_percentage"] = self.current_battery
+        return metrics
+
+    def trigger_intervention(self, event_type: str, extra: dict | None = None):
+        """
+        Centralised intervention logic:
+        - increments incidents
+        - adds system snapshot
+        - logs event with metrics
+        """
+        if extra is None:
+            extra = {}
+
+        self.incidents += 1
+
+        base_details = dict(self.details)  # estop, operation_mode, etc.
+        base_details.update(extra)
+        base_details["system_snapshot"] = self.system_snapshot.copy()
+
+        self.log_event(event_type, base_details)
+
+    def handle_intervention_triggers(self, topic_name: str, data: dict, cfg: dict):
+        """
+        Apply YAML-configured triggers for this topic.
+        - intervention_on_message: triggers on any message
+        - intervention_on_change[field]: triggers when selected field changes
+        """
+        # 1) Trigger on any message (e.g. /cmd_vel/joy)
+        msg_trig = cfg.get("intervention_on_message", {})
+        if msg_trig.get("enable", False):
+            evt_type = msg_trig.get("event_type", f"{topic_name}_activity")
+            self.trigger_intervention(evt_type, extra={"topic": topic_name})
+
+        # 2) Trigger on change of specific fields
+        field_trigs = cfg.get("intervention_on_change", {})
+        for field_name, trig_cfg in field_trigs.items():
+            if field_name not in data:
+                continue
+
+            key = (topic_name, field_name)
+            prev = self.prev_field_values.get(key)
+            new = data[field_name]
+            changed = (prev is None) or (prev != new)
+            self.prev_field_values[key] = new
+
+            if not changed:
+                continue
+
+            # Optional: only trigger on a specific value (e.g. True)
+            trigger_value = trig_cfg.get("trigger_value", None)
+            if trigger_value is not None and new != trigger_value:
+                continue
+
+            evt_type = trig_cfg.get(
+                "event_type", f"{topic_name}:{field_name}_changed"
+            )
+            extra = {
+                "topic": topic_name,
+                "field": field_name,
+                "new_value": new,
+                "prev_value": prev,
+            }
+            self.trigger_intervention(evt_type, extra=extra)
+
     # -------------------------
     # Callbacks
     # -------------------------
@@ -253,10 +321,10 @@ class AutonomyMetricsLogger(Node):
             return
 
         if not hasattr(self, 'previous_time'):
-             self.previous_time = current_time
-        
+            self.previous_time = current_time
+
         time_diff = (current_time - self.previous_time).nanoseconds * 1e-9
-        
+
         self.speed = dist / time_diff if time_diff > 0 else 0.0
         self.distance += dist
         if self.details.get('operation_mode') == self.AUTO:
@@ -265,11 +333,19 @@ class AutonomyMetricsLogger(Node):
         self.previous_x = pos.x
         self.previous_y = pos.y
         self.previous_time = current_time
-        self.last_odom_update_time = current_time 
+        self.last_odom_update_time = current_time
+
+        # NEW: keep metrics in the snapshot too
+        self.system_snapshot['metrics'] = {
+            'distance': self.distance,
+            'autonomous_distance': self.autonomous_distance,
+            'speed': self.speed,
+        }
 
         self.publish_distance(self.distance)
         self.publish_speed(self.speed)
         self.handle_dynamic_publish(topic_name, msg)
+
 
     def control_mode_role_callback(self, topic_name, msg):
         cfg = self.topic_cfg_map.get(topic_name, {})
@@ -281,13 +357,15 @@ class AutonomyMetricsLogger(Node):
 
         mapping = cfg.get('mode_mapping', {})
         new_mode = mapping.get(str(val)) or mapping.get(val)
-        
+
         if new_mode is None:
-            if str(val) == "3": new_mode = self.MAN
-            else: new_mode = self.AUTO
+            if str(val) == "3":
+                new_mode = self.MAN
+            else:
+                new_mode = self.AUTO
 
         current_time = datetime.now()
-        
+
         if new_mode != self.details.get('operation_mode'):
             prev_mode = self.details.get('operation_mode')
             self.details['operation_mode'] = new_mode
@@ -298,23 +376,18 @@ class AutonomyMetricsLogger(Node):
                     delta = (current_time - self.autonomous_start_time).total_seconds()
                     self.autonomous_time += delta
                     self.autonomous_start_time = None
+
+                # Manual override is an intervention
+                self.trigger_intervention('Manual_override')
+
             elif new_mode == self.AUTO:
                 self.autonomous_start_time = current_time
-
-            # Log events
-            if new_mode == self.MAN:
-                self.incidents += 1
-                # ---------------------------------------------------------
-                # 2. INTERVENTION SNAPSHOT
-                # Merge current details with the snapshot of ALL topics
-                # ---------------------------------------------------------
-                intervention_data = {
-                    **self.details, 
+                # Logging autonomous mode change (not counted as intervention)
+                self.log_event('Autonomous', {
+                    **self.details,
                     'system_snapshot': self.system_snapshot.copy()
-                }
-                self.log_event('Manual_override', intervention_data)
-            else:
-                self.log_event('Autonomous', self.details)
+                })
+
 
     def estop_role_callback(self, topic_name, msg):
         cfg = self.topic_cfg_map.get(topic_name, {})
@@ -330,39 +403,50 @@ class AutonomyMetricsLogger(Node):
             self.details['estop'] = v
             self.get_logger().info(f"E-Stop: {v}")
             if v:
-                self.incidents += 1
-                self.log_event('EMS', self.details)
+                # E-stop counts as intervention
+                self.trigger_intervention('EMS')
+
 
     def generic_callback(self, topic_name, msg, log_fields):
+        cfg = self.topic_cfg_map.get(topic_name, {})
         data = {}
+
         # Extract data specified in log_fields
         for f in log_fields:
             try:
                 data[f] = get_nested_field(msg, f)
             except Exception:
                 pass
-        
+
         if data:
-            # ---------------------------------------------------------
-            # 3. Update Snapshot
-            # Save these values to the global snapshot cache
-            # ---------------------------------------------------------
+            # Update Snapshot with the latest values from this topic
             self.system_snapshot[topic_name] = data
 
+            # If this topic carries battery info, update the battery state
+            battery_field = cfg.get("battery_field")
+            if battery_field and battery_field in data:
+                self.current_battery = data[battery_field]
+
+            # Topic-level event logging
             event = {
                 'time': datetime.now(tz=timezone.utc),
                 'event_type': f"topic:{topic_name}",
                 'details': data
             }
-            
+
             self.db_mgr_local.add_event(event)
             if self.db_mgr_remote:
                 try:
                     self.db_mgr_remote.add_event(event)
-                except Exception as e:
+                except Exception:
                     pass
 
+        # Apply YAML-configured intervention triggers (message & field-change)
+        self.handle_intervention_triggers(topic_name, data, cfg)
+
+        # Dynamic republishing if configured
         self.handle_dynamic_publish(topic_name, msg)
+
 
     def handle_dynamic_publish(self, topic_name, msg):
         pub_cfg = self.dynamic_publishers.get(topic_name)
@@ -436,21 +520,31 @@ class AutonomyMetricsLogger(Node):
                 self.get_logger().warn(f"DB update failed: {e}")
 
     def log_event(self, msg='', details=None):
-        if details is None: details = {}
+        if details is None:
+            details = {}
+
+        # Attach metrics to every event
+        details = {
+            **details,
+            'metrics': self.get_metrics_snapshot()
+        }
+
         event_time = datetime.now(tz=timezone.utc)
         event = {'time': event_time, 'event_type': msg, 'details': details}
-        
+
         self.db_mgr_local.add_event(event)
         if self.db_mgr_remote:
             try:
                 self.db_mgr_remote.add_event(event)
-            except Exception: pass
+            except Exception:
+                pass
 
         incidents_msg = Int8()
         incidents_msg.data = self.incidents
         self.incidents_publisher.publish(incidents_msg)
 
         self.update_db_metrics()
+        
 
     def publish_distance(self, dist):
         msg = Float32()
@@ -464,7 +558,85 @@ class AutonomyMetricsLogger(Node):
         self.speed_publisher.publish(msg)
 
     def get_git_info(self, repo_path):
-        return {}
+        """
+        Return basic git metadata for a repo.
+
+        Schema (example):
+        {
+            "path": "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario",
+            "exists": True,
+            "remote": "git@github.com:LCAS/aoc_strawberry_scenario.git",
+            "branch": "main",
+            "commit": "f3a6c1b4e6f8c3b3c823f2c45e56a123456789ab",
+            "short_commit": "f3a6c1b",
+            "dirty": false,
+            "error": null
+        }
+        """
+        info = {
+            "path": repo_path,
+            "exists": False,
+            "remote": None,
+            "branch": None,
+            "commit": None,
+            "short_commit": None,
+            "dirty": None,
+            "error": None,
+        }
+
+        try:
+            if not repo_path or not os.path.isdir(repo_path):
+                info["error"] = "Path does not exist or is not a directory"
+                return info
+
+            def git(args):
+                result = subprocess.run(
+                    ["git", "-C", repo_path] + args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr.strip())
+                return result.stdout.strip()
+
+            info["exists"] = True
+
+            # Remote (best effort)
+            try:
+                info["remote"] = git(["config", "--get", "remote.origin.url"])
+            except Exception:
+                info["remote"] = None
+
+            # Branch (HEAD might be detached)
+            try:
+                info["branch"] = git(["rev-parse", "--abbrev-ref", "HEAD"])
+            except Exception:
+                info["branch"] = None
+
+            # Commit hashes
+            try:
+                info["commit"] = git(["rev-parse", "HEAD"])
+            except Exception:
+                info["commit"] = None
+
+            try:
+                info["short_commit"] = git(["rev-parse", "--short", "HEAD"])
+            except Exception:
+                info["short_commit"] = None
+
+            # Dirty / clean state
+            try:
+                status = git(["status", "--porcelain"])
+                info["dirty"] = bool(status)
+            except Exception:
+                info["dirty"] = None
+
+        except Exception as e:
+            info["error"] = str(e)
+
+        return info
+
 
 def main(args=None):
     rclpy.init(args=args)

@@ -31,21 +31,32 @@ topics:
       enable: false
 
   # ---------------------------------------------------------
-  # 3. System Status (Working)
+  # 3. System Status (Working + intervention on fault)
   # ---------------------------------------------------------
   - name: "/gophar/system_status"
     type: "dynium_gophar_interfaces/msg/SystemStatus"
+    role: "system_status"
     log_fields:
       - "fault_shutdown"
       - "hv_on"
       - "ignition_switch"
       - "charger_interlock"
       - "battery_percentage"
+
+    # Tell logger which field carries battery level so it can be attached
+    battery_field: "battery_percentage"
+
     publish:
       enable: true
       topic: "mdbi_logger/battery_level"
       type: "std_msgs/msg/Float32"
       field: "battery_percentage"
+
+    # Trigger an intervention when 'fault_shutdown' changes to True
+    intervention_on_change:
+      fault_shutdown:
+        trigger_value: true          # Only on False -> True edge
+        event_type: "Fault_shutdown"
 
   # ---------------------------------------------------------
   # 4. [MISSING] Control Mode (REQUIRED FOR MDBI)
@@ -62,3 +73,14 @@ topics:
       "MANUAL": "Manual"
       "1": "Autonomous"
       "0": "Manual"
+
+  # ---------------------------------------------------------
+  # 5. Joystick command -> Intervention trigger on activity
+  # ---------------------------------------------------------
+  - name: "/cmd_vel/joy"
+    type: "geometry_msgs/msg/Twist"   # Adjust if different
+    log_fields: []                    # We don't need to log individual fields here
+    # When any message arrives on this topic, treat as an intervention
+    intervention_on_message:
+      enable: true
+      event_type: "Joy_override"
