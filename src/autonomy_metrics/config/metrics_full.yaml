@@ -1,5 +1,16 @@
 git_repos:
-  aoc_scenario_path: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario"
+  scenario: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario"
+  autonomy_metrics_logger: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/autonomy_metrics_logger"
+  navfn_planner: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/navfn_planner"
+  perception_boundary_estimator: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/perception_boundary_estimator"
+  pointcloud_processing: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/pointcloud_processing"
+  robot_boundary_checker: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/robot_boundary_checker"
+  ros2_topic_monitor: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/ros2_topic_monitor"
+  row_nav_planner: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/row_nav_planner"
+  ppl_gofar_platform: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/robots/ppl_gofar_platform"
+  topological_navigation: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/contrib/topological_navigation"
+  sentor: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/contrib/sentor"
+  kiss-icp: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/contrib/kiss-icp"
 
 topics:
   # ---------------------------------------------------------

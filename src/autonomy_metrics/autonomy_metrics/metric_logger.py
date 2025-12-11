@@ -561,7 +561,7 @@ class AutonomyMetricsLogger(Node):
         """
         Return basic git metadata for a repo.
 
-        Schema (example):
+        Example schema:
         {
             "path": "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario",
             "exists": True,
@@ -569,6 +569,9 @@ class AutonomyMetricsLogger(Node):
             "branch": "main",
             "commit": "f3a6c1b4e6f8c3b3c823f2c45e56a123456789ab",
             "short_commit": "f3a6c1b",
+            "commit_message": "Fix navsat transform delay",
+            "tags": ["v0.3.1"],
+            "describe": "v0.3.1-2-gf3a6c1b",
             "dirty": false,
             "error": null
         }
@@ -580,6 +583,9 @@ class AutonomyMetricsLogger(Node):
             "branch": None,
             "commit": None,
             "short_commit": None,
+            "commit_message": None,  # NEW
+            "tags": [],              # NEW
+            "describe": None,        # NEW
             "dirty": None,
             "error": None,
         }
@@ -602,13 +608,13 @@ class AutonomyMetricsLogger(Node):
 
             info["exists"] = True
 
-            # Remote (best effort)
+            # Remote
             try:
                 info["remote"] = git(["config", "--get", "remote.origin.url"])
             except Exception:
                 info["remote"] = None
 
-            # Branch (HEAD might be detached)
+            # Branch
             try:
                 info["branch"] = git(["rev-parse", "--abbrev-ref", "HEAD"])
             except Exception:
@@ -624,6 +630,30 @@ class AutonomyMetricsLogger(Node):
                 info["short_commit"] = git(["rev-parse", "--short", "HEAD"])
             except Exception:
                 info["short_commit"] = None
+
+            # NEW: Last commit message (full body or just subject)
+            try:
+                # Subject only:
+                info["commit_message"] = git(["log", "-1", "--pretty=%s"])
+                # If you prefer full body, use: "--pretty=%B"
+            except Exception:
+                info["commit_message"] = None
+
+            # NEW: Tags pointing at HEAD
+            try:
+                tags_str = git(["tag", "--points-at", "HEAD"])
+                if tags_str:
+                    info["tags"] = tags_str.splitlines()
+                else:
+                    info["tags"] = []
+            except Exception:
+                info["tags"] = []
+
+            # NEW: git describe (nearest tag + distance)
+            try:
+                info["describe"] = git(["describe", "--tags", "--always"])
+            except Exception:
+                info["describe"] = None
 
             # Dirty / clean state
             try:
