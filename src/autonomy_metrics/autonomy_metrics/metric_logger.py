@@ -2,7 +2,6 @@
 """
 YAML-driven AutonomyMetricsLogger
 Author: Ibrahim Hroob - JABASAI
-Updated: Fixed Battery Pub & Added Intervention Snapshot
 """
 
 import os
@@ -19,7 +18,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 
 # Keep a few explicit imports used by default publishers (std msgs)
-from std_msgs.msg import Bool, Float32, Int32, String
+from std_msgs.msg import Bool, Float32, Int32
 
 from autonomy_metrics.db_mgr import DatabaseMgr as DBMgr
 
@@ -227,7 +226,8 @@ class AutonomyMetricsLogger(Node):
             try:
                 git_cfg = self.config.get('git_repos', {})
                 for label, p in git_cfg.items():
-                    git_repos.append({label: self.get_git_info(p)})
+                    repo_path = os.path.join('/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario', p)
+                    git_repos.append({label: self.get_git_info(repo_path)})
             except Exception:
                 pass
 
@@ -678,9 +678,6 @@ class AutonomyMetricsLogger(Node):
         self.system_snapshot['cmd_vel_nav'] = {
             'linear_x': msg.linear.x,
             'linear_y': msg.linear.y,
-            'linear_z': msg.linear.z,
-            'angular_x': msg.angular.x,
-            'angular_y': msg.angular.y,
             'angular_z': msg.angular.z,
         }
         # IMPORTANT: do NOT call check_collision_condition here
@@ -703,9 +700,6 @@ class AutonomyMetricsLogger(Node):
         self.system_snapshot['cmd_vel_collision'] = {
             'linear_x': msg.linear.x,
             'linear_y': msg.linear.y,
-            'linear_z': msg.linear.z,
-            'angular_x': msg.angular.x,
-            'angular_y': msg.angular.y,
             'angular_z': msg.angular.z,
         }
 
@@ -798,8 +792,7 @@ class AutonomyMetricsLogger(Node):
                 dbm.update_incidents(self.incidents)
                 dbm.update_autonomous_distance(self.autonomous_distance)
                 dbm.update_mdbi(mdbi_val)
-                if hasattr(dbm, "update_collision_incidents"):
-                    dbm.update_collision_incidents(self.collision_incidents)
+                dbm.update_collision_incidents(self.collision_incidents)
             except Exception as e:
                 self.get_logger().warn(f"DB update failed: {e}")
 
@@ -847,11 +840,8 @@ class AutonomyMetricsLogger(Node):
                 "linear": {
                     "x": float(self.last_nav_cmd.linear.x),
                     "y": float(self.last_nav_cmd.linear.y),
-                    "z": float(self.last_nav_cmd.linear.z),
                 },
                 "angular": {
-                    "x": float(self.last_nav_cmd.angular.x),
-                    "y": float(self.last_nav_cmd.angular.y),
                     "z": float(self.last_nav_cmd.angular.z),
                 },
             },
@@ -859,11 +849,8 @@ class AutonomyMetricsLogger(Node):
                 "linear": {
                     "x": float(self.last_collision_cmd.linear.x),
                     "y": float(self.last_collision_cmd.linear.y),
-                    "z": float(self.last_collision_cmd.linear.z),
                 },
                 "angular": {
-                    "x": float(self.last_collision_cmd.angular.x),
-                    "y": float(self.last_collision_cmd.angular.y),
                     "z": float(self.last_collision_cmd.angular.z),
                 },
             },

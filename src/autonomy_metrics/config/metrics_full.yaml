@@ -1,16 +1,17 @@
 git_repos:
-  scenario: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario"
-  autonomy_metrics_logger: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/autonomy_metrics_logger"
-  navfn_planner: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/navfn_planner"
-  perception_boundary_estimator: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/perception_boundary_estimator"
-  pointcloud_processing: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/pointcloud_processing"
-  robot_boundary_checker: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/robot_boundary_checker"
-  ros2_topic_monitor: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/ros2_topic_monitor"
-  row_nav_planner: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/jabas/row_nav_planner"
-  ppl_gofar_platform: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/robots/ppl_gofar_platform"
-  topological_navigation: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/contrib/topological_navigation"
-  sentor: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/contrib/sentor"
-  kiss-icp: "/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario/contrib/kiss-icp"
+  # all repos are with reference to /home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario
+  scenario: "."
+  autonomy_metrics_logger: "jabas/autonomy_metrics_logger"
+  navfn_planner: "jabas/navfn_planner"
+  perception_boundary_estimator: "jabas/perception_boundary_estimator"
+  pointcloud_processing: "jabas/pointcloud_processing"
+  robot_boundary_checker: "jabas/robot_boundary_checker"
+  ros2_topic_monitor: "jabas/ros2_topic_monitor"
+  row_nav_planner: "jabas/row_nav_planner"
+  ppl_gofar_platform: "robots/ppl_gofar_platform"
+  topological_navigation: "contrib/topological_navigation"
+  sentor: "contrib/sentor"
+  kiss-icp: "contrib/kiss-icp"
 
 topics:
   # ---------------------------------------------------------
@@ -18,15 +19,7 @@ topics:
   # ---------------------------------------------------------
   - name: "/gps_base/fix"
     type: "sensor_msgs/msg/NavSatFix"
-    log_fields:
-      - "latitude"
-      - "longitude"
-      - "altitude"
-    publish:
-      enable: false
-      topic: "mdbi_logger/gps_alt"
-      type: "std_msgs/msg/Float32"
-      field: "altitude"
+    log_all_fields: true
 
   # ---------------------------------------------------------
   # Odometry
@@ -47,13 +40,7 @@ topics:
   - name: "/gophar/system_status"
     type: "dynium_gophar_interfaces/msg/SystemStatus"
     role: "system_status"
-    log_fields: []
-    log_fields:
-      - "fault_shutdown"
-      - "hv_on"
-      - "ignition_switch"
-      - "charger_interlock"
-      - "battery_percentage"
+    log_all_fields: true
 
     # Tell logger which field carries battery level so it can be attached
     battery_field: "battery_percentage"
@@ -87,7 +74,7 @@ topics:
   #     "0": "Manual"
 
   # ---------------------------------------------------------
-  # X. Mode observation via velocity command
+  # Mode observation via velocity command
   # ---------------------------------------------------------
   # Rule: the heuristic will only be used if there is no topic with role: "control_mode" configured in the YAML.
   - name: "/cmd_vel/collision_smoothed"
@@ -110,7 +97,6 @@ topics:
   # ---------------------------------------------------------
   # Collision monitor: nav vs collision-filtered velocity
   # ---------------------------------------------------------
-
   - name: "/cmd_vel/nav"
     type: "geometry_msgs/msg/Twist"
     role: "collision_nav"
@@ -124,23 +110,18 @@ topics:
   # ---------------------------------------------------------
   # Steering actuator + motor status snapshots for interventions
   # ---------------------------------------------------------
-
   - name: "/gophar/steering_actuator/front"
     type: "dynium_gophar_interfaces/msg/SteeringActuatorStatus"
-    log_all_fields: true        # <--- NEW
-    log_fields: []              # optional, ignored if log_all_fields is true
+    log_all_fields: true
     
   - name: "/gophar/steering_actuator/rear"
     type: "dynium_gophar_interfaces/msg/SteeringActuatorStatus"
-    log_all_fields: true        # <--- NEW
-    log_fields: []              # optional, ignored if log_all_fields is true
+    log_all_fields: true
 
   - name: "/gophar/motor_status/motor_0"
     type: "dynium_gophar_interfaces/msg/MotorStatus"
-    log_all_fields: true        # <--- NEW
-    log_fields: []              # optional, ignored if log_all_fields is true
+    log_all_fields: true
 
   - name: "/gophar/motor_status/motor_1"
     type: "dynium_gophar_interfaces/msg/MotorStatus"
-    log_all_fields: true        # <--- NEW
-    log_fields: []              # optional, ignored if log_all_fields is true
+    log_all_fields: true
