@@ -14,7 +14,7 @@ git_repos:
 
 topics:
   # ---------------------------------------------------------
-  # 1. GPS (Working)
+  # GPS
   # ---------------------------------------------------------
   - name: "/gps_base/fix"
     type: "sensor_msgs/msg/NavSatFix"
@@ -23,13 +23,13 @@ topics:
       - "longitude"
       - "altitude"
     publish:
-      enable: true
+      enable: false
       topic: "mdbi_logger/gps_alt"
       type: "std_msgs/msg/Float32"
       field: "altitude"
 
   # ---------------------------------------------------------
-  # 2. Odometry (Working)
+  # Odometry
   # ---------------------------------------------------------
   - name: "/gophar_vehicle_controller/odometry"
     type: "nav_msgs/msg/Odometry"
@@ -42,11 +42,12 @@ topics:
       enable: false
 
   # ---------------------------------------------------------
-  # 3. System Status (Working + intervention on fault)
+  # System Status (intervention on fault)
   # ---------------------------------------------------------
   - name: "/gophar/system_status"
     type: "dynium_gophar_interfaces/msg/SystemStatus"
     role: "system_status"
+    log_fields: []
     log_fields:
       - "fault_shutdown"
       - "hv_on"
@@ -70,28 +71,76 @@ topics:
         event_type: "Fault_shutdown"
 
   # ---------------------------------------------------------
-  # 4. [MISSING] Control Mode (REQUIRED FOR MDBI)
+  # [MISSING] Control Mode (REQUIRED FOR MDBI)
   # ---------------------------------------------------------
   # You must add this so the logger knows when to count 'autonomous' distance.
   # Adjust 'name' and 'mode_mapping' to match your robot.
-  - name: "/gophar/operation_mode"   # <--- CHECK THIS TOPIC NAME
-    type: "std_msgs/msg/String"      # <--- CHECK THIS TYPE (String, Int8, etc)
-    role: "control_mode"
-    mode_field: "data"               # The field inside the message holding the mode
-    # Map the values your robot sends to 'Autonomous' or 'Manual'
-    mode_mapping:
-      "AUTO": "Autonomous"
-      "MANUAL": "Manual"
-      "1": "Autonomous"
-      "0": "Manual"
+  # - name: "/gophar/operation_mode"   # <--- CHECK THIS TOPIC NAME
+  #   type: "std_msgs/msg/String"      # <--- CHECK THIS TYPE (String, Int8, etc)
+  #   role: "control_mode"
+  #   mode_field: "data"               # The field inside the message holding the mode
+  #   # Map the values your robot sends to 'Autonomous' or 'Manual'
+  #   mode_mapping:
+  #     "AUTO": "Autonomous"
+  #     "MANUAL": "Manual"
+  #     "1": "Autonomous"
+  #     "0": "Manual"
 
   # ---------------------------------------------------------
-  # 5. Joystick command -> Intervention trigger on activity
+  # X. Mode observation via velocity command
   # ---------------------------------------------------------
-  - name: "/cmd_vel/joy"
+  # Rule: the heuristic will only be used if there is no topic with role: "control_mode" configured in the YAML.
+  - name: "/cmd_vel/collision_smoothed"
+    type: "geometry_msgs/msg/Twist"
+    role: "mode_observer"
+    log_fields: []     # keep empty if you don't want per-message events
+
+
+  # ---------------------------------------------------------
+  # Joystick command -> Intervention trigger on activity
+  # ---------------------------------------------------------
+  - name: "/cmd_vel_joy_smoothed"
     type: "geometry_msgs/msg/Twist"   # Adjust if different
     log_fields: []                    # We don't need to log individual fields here
     # When any message arrives on this topic, treat as an intervention
     intervention_on_message:
       enable: true
       event_type: "Joy_override"
+
+  # ---------------------------------------------------------
+  # Collision monitor: nav vs collision-filtered velocity
+  # ---------------------------------------------------------
+
+  - name: "/cmd_vel/nav"
+    type: "geometry_msgs/msg/Twist"
+    role: "collision_nav"
+    log_fields: []   # no per-message events needed
+
+  - name: "/cmd_vel/collision"
+    type: "geometry_msgs/msg/Twist"
+    role: "collision_output"
+    log_fields: []   # no per-message events needed
+
+  # ---------------------------------------------------------
+  # Steering actuator + motor status snapshots for interventions
+  # ---------------------------------------------------------
+
+  - name: "/gophar/steering_actuator/front"
+    type: "dynium_gophar_interfaces/msg/SteeringActuatorStatus"
+    log_all_fields: true        # <--- NEW
+    log_fields: []              # optional, ignored if log_all_fields is true
+    
+  - name: "/gophar/steering_actuator/rear"
+    type: "dynium_gophar_interfaces/msg/SteeringActuatorStatus"
+    log_all_fields: true        # <--- NEW
+    log_fields: []              # optional, ignored if log_all_fields is true
+
+  - name: "/gophar/motor_status/motor_0"
+    type: "dynium_gophar_interfaces/msg/MotorStatus"
+    log_all_fields: true        # <--- NEW
+    log_fields: []              # optional, ignored if log_all_fields is true
+
+  - name: "/gophar/motor_status/motor_1"
+    type: "dynium_gophar_interfaces/msg/MotorStatus"
+    log_all_fields: true        # <--- NEW
+    log_fields: []              # optional, ignored if log_all_fields is true
