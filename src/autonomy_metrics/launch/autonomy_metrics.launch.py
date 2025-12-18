@@ -1,75 +1,167 @@
-# -*- coding: utf-8 -*-
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 
 import os
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
-
-    gps_topic = LaunchConfiguration('gps_topic', default='/gps_base/fix')
-    odometry_topic = LaunchConfiguration('odometry_topic', default='/diff_drive_controller/odom')
-    battery_status = LaunchConfiguration('battery_status_topic', default='/diff_drive_controller/battery_status')
-    estop_status = LaunchConfiguration('estop_status_topic', default='/diff_drive_controller/estop_status')
-    hunter_status = LaunchConfiguration('hunter_status_topic', default='/hunter_status')
-    actioned_by_coordinator_topic = LaunchConfiguration('actioned_by_coordinator_topic', default='/topological_navigation/execute_policy_mode/goal')
+    # -------------------------------------------------------------------------
+    # Launch arguments (all node parameters exposed)
+    # -------------------------------------------------------------------------
     
-    min_distance_threshold = LaunchConfiguration('min_distance_threshold', default='0.2')
+    pkg_dir = get_package_share_directory('autonomy_metrics')
+    
+    config_yaml_arg = DeclareLaunchArgument(
+        'config_yaml',
+        default_value=os.path.join(pkg_dir, 'config', 'metrics_full.yaml'),
+        description='Path to the YAML config file for AutonomyMetricsLogger',
+    )
 
-    # Path to the scenario and navigation repos
-    aoc_scenario_path = LaunchConfiguration('aoc_scenario_path', default='/home/ros/aoc_strawberry_scenario_ws/src/aoc_strawberry_scenario')
-    aoc_navigation_path = LaunchConfiguration('aoc_navigation_path', default='/home/ros/aoc_strawberry_scenario_ws/src/aoc_navigation')
+    mongodb_host_arg = DeclareLaunchArgument(
+        'mongodb_host',
+        default_value='localhost',
+        description='Hostname of local MongoDB instance',
+    )
 
-    # New parameters for MongoDB host and port
-    mongodb_host = LaunchConfiguration('mongodb_host', default='localhost')
-    mongodb_port = LaunchConfiguration('mongodb_port', default=os.getenv('MONGOD_PORT', '27017'))
+    mongodb_port_arg = DeclareLaunchArgument(
+        'mongodb_port',
+        default_value='27018',
+        description='Port of local MongoDB instance',
+    )
+
+    remote_mongodb_host_arg = DeclareLaunchArgument(
+        'remote_mongodb_host',
+        default_value='',
+        description='Hostname of remote MongoDB instance (leave empty to disable)',
+    )
+
+    remote_mongodb_port_arg = DeclareLaunchArgument(
+        'remote_mongodb_port',
+        default_value='27017',
+        description='Port of remote MongoDB instance',
+    )
+
+    enable_remote_logging_arg = DeclareLaunchArgument(
+        'enable_remote_logging',
+        default_value='false',
+        description='Enable logging to remote MongoDB (true/false)',
+    )
+
+    min_distance_threshold_arg = DeclareLaunchArgument(
+        'min_distance_threshold',
+        default_value='0.2',
+        description='Minimum odom distance increment (m) required to update metrics',
+    )
+
+    stop_timeout_arg = DeclareLaunchArgument(
+        'stop_timeout',
+        default_value='2.0',
+        description='Timeout (s) after last odom movement before speed is forced to 0',
+    )
+
+    # Mode observer (velocity-based control mode inference)
+    mode_observer_cmd_timeout_arg = DeclareLaunchArgument(
+        'mode_observer_cmd_timeout',
+        default_value='1.0',
+        description='Time window (s) in which a cmd_vel command is considered recent for mode observer',
+    )
+
+    mode_observer_speed_threshold_arg = DeclareLaunchArgument(
+        'mode_observer_speed_threshold',
+        default_value='0.01',
+        description='Speed (m/s) above which robot is considered moving for mode observer',
+    )
+
+    # Collision monitor (nav vs collision output)
+    collision_nav_threshold_arg = DeclareLaunchArgument(
+        'collision_nav_threshold',
+        default_value='0.01',
+        description='Minimum nav linear.x to consider a forward motion command',
+    )
+
+    collision_zero_threshold_arg = DeclareLaunchArgument(
+        'collision_zero_threshold',
+        default_value='0.001',
+        description='Absolute linear.x threshold below which collision output is considered zero',
+    )
+
+    collision_time_window_arg = DeclareLaunchArgument(
+        'collision_time_window',
+        default_value='0.5',
+        description='Max age (s) of nav/collision commands to consider for collision detection',
+    )
+
+    collision_log_cooldown_arg = DeclareLaunchArgument(
+        'collision_log_cooldown',
+        default_value='1.0',
+        description='Cooldown (s) between consecutive collision logs (if you still use cooldown)',
+    )
+
+    # -------------------------------------------------------------------------
+    # LaunchConfigurations (bind arguments to parameters)
+    # -------------------------------------------------------------------------
+    config_yaml = LaunchConfiguration('config_yaml')
+    mongodb_host = LaunchConfiguration('mongodb_host')
+    mongodb_port = LaunchConfiguration('mongodb_port')
+    remote_mongodb_host = LaunchConfiguration('remote_mongodb_host')
+    remote_mongodb_port = LaunchConfiguration('remote_mongodb_port')
+    enable_remote_logging = LaunchConfiguration('enable_remote_logging')
+    min_distance_threshold = LaunchConfiguration('min_distance_threshold')
+    stop_timeout = LaunchConfiguration('stop_timeout')
+
+    mode_observer_cmd_timeout = LaunchConfiguration('mode_observer_cmd_timeout')
+    mode_observer_speed_threshold = LaunchConfiguration('mode_observer_speed_threshold')
+
+    collision_nav_threshold = LaunchConfiguration('collision_nav_threshold')
+    collision_zero_threshold = LaunchConfiguration('collision_zero_threshold')
+    collision_time_window = LaunchConfiguration('collision_time_window')
+    collision_log_cooldown = LaunchConfiguration('collision_log_cooldown')
+
+    # -------------------------------------------------------------------------
+    # AutonomyMetricsLogger node
+    # -------------------------------------------------------------------------
+    metrics_logger_node = Node(
+        package='autonomy_metrics',
+        executable='metric_logger',
+        name='mdbi_logger_dynamic',
+        output='screen',
+        parameters=[{
+            'config_yaml': config_yaml,
+            'mongodb_host': mongodb_host,
+            'mongodb_port': mongodb_port,
+            'remote_mongodb_host': remote_mongodb_host,
+            'remote_mongodb_port': remote_mongodb_port,
+            'enable_remote_logging': enable_remote_logging,
+            'min_distance_threshold': min_distance_threshold,
+            'stop_timeout': stop_timeout,
+
+            'mode_observer_cmd_timeout': mode_observer_cmd_timeout,
+            'mode_observer_speed_threshold': mode_observer_speed_threshold,
+
+            'collision_nav_threshold': collision_nav_threshold,
+            'collision_zero_threshold': collision_zero_threshold,
+            'collision_time_window': collision_time_window,
+            'collision_log_cooldown': collision_log_cooldown,
+        }],
+    )
 
     return LaunchDescription([
-        # Declare Launch Arguments for the existing parameters
-        DeclareLaunchArgument(
-            'gps_topic', default_value=gps_topic, description='GPS topic for base fix'),
-        DeclareLaunchArgument(
-            'odometry_topic', default_value=odometry_topic, description='A topic for odometry'),
-        DeclareLaunchArgument(
-            'battery_status_topic', default_value=battery_status, description='Battery status topic'),
-        DeclareLaunchArgument(
-            'estop_status_topic', default_value=estop_status, description='E-stop status topic'),
-        DeclareLaunchArgument(
-            'hunter_status_topic', default_value=hunter_status, description='hunter status topic'),
-        DeclareLaunchArgument(
-            'actioned_by_coordinator_topic', default_value=actioned_by_coordinator_topic, description=''),
-        
-        DeclareLaunchArgument(
-            'min_distance_threshold', default_value=min_distance_threshold, description=''),
-        
-        DeclareLaunchArgument(
-            'aoc_scenario_path', default_value=aoc_scenario_path, description='path to aoc scenario'),
-        DeclareLaunchArgument(
-            'aoc_navigation_path', default_value=aoc_navigation_path, description='path to aoc navigation'),
-
-        # Declare Launch Arguments for the new MongoDB parameters
-        DeclareLaunchArgument(
-            'mongodb_host', default_value=mongodb_host, description='MongoDB host address'),
-        DeclareLaunchArgument(
-            'mongodb_port', default_value=mongodb_port, description='MongoDB port'),
-
-        # Node Configuration
-        Node(
-            package='autonomy_metrics',
-            executable='metric_logger',
-            output='screen',
-            parameters=[{
-                'gps_topic': gps_topic,
-                'odometry_topic': odometry_topic,
-                'battery_status_topic': battery_status,
-                'estop_status_topic': estop_status,
-                'hunter_status_topic': hunter_status,
-                'aoc_scenario_path': aoc_scenario_path,
-                'aoc_navigation_path': aoc_navigation_path,
-                'mongodb_host': mongodb_host,
-                'mongodb_port': mongodb_port,
-            }],
-        )
+        config_yaml_arg,
+        mongodb_host_arg,
+        mongodb_port_arg,
+        remote_mongodb_host_arg,
+        remote_mongodb_port_arg,
+        enable_remote_logging_arg,
+        min_distance_threshold_arg,
+        stop_timeout_arg,
+        mode_observer_cmd_timeout_arg,
+        mode_observer_speed_threshold_arg,
+        collision_nav_threshold_arg,
+        collision_zero_threshold_arg,
+        collision_time_window_arg,
+        collision_log_cooldown_arg,
+        metrics_logger_node,
     ])

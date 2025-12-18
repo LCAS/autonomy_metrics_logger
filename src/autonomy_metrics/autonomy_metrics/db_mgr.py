@@ -72,6 +72,7 @@ class DatabaseMgr:
             "incidents": 0,
             "distance": 0,
             "autonomous_distance": 0,
+            "collision_incidents": 0,   # NEW
             "events": []
         }
         result = self.sessions_collection.insert_one(session_document)
@@ -154,5 +155,21 @@ class DatabaseMgr:
         result = self.sessions_collection.update_one(
             {"_id": ObjectId(self.session_id)},
             {"$set": {"mdbi": mdbi}}
+        )
+        return result.modified_count > 0
+    
+    def update_collision_incidents(self, collision_incidents):
+        """
+        Updates the collision_incidents value of the current session.
+
+        Args:
+            collision_incidents (int): The new collision incidents value.
+
+        Returns:
+            bool: True if the value was updated successfully, False otherwise.
+        """
+        result = self.sessions_collection.update_one(
+            {"_id": ObjectId(self.session_id)},
+            {"$set": {"collision_incidents": collision_incidents}}
         )
         return result.modified_count > 0
